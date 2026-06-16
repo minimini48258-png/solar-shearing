@@ -10,13 +10,12 @@
   height: 100%;
 }
 
-/* MapLibre デフォルトの上書き */
 .maplibregl-ctrl-bottom-right {
   right: 8px;
   bottom: 36px;
 }
 
-/* オーバーレイ共通 */
+/* オーバーレイ基本 */
 .map-overlay {
   position: absolute;
   z-index: 10;
@@ -33,74 +32,113 @@
   left: 12px;
 }
 
+/* 計測ツールは右上（ナビゲーションコントロールより下） */
+.map-overlay.top-right-measure {
+  top: 50px;
+  right: 48px;
+  pointer-events: all;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: 260px;
+}
+
 /* 情報カード */
 .overlay-card {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255,255,255,0.92);
   backdrop-filter: blur(4px);
   border-radius: 8px;
   padding: 8px 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   min-width: 200px;
+  pointer-events: none;
 }
 
-.overlay-date {
-  font-size: 13px;
-  font-weight: 700;
-  color: #1a1a1a;
-  margin-bottom: 3px;
-  font-variant-numeric: tabular-nums;
+.overlay-date { font-size: 13px; font-weight: 700; color: #1a1a1a; margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+.overlay-sun { font-size: 12px; color: #d97706; }
+.overlay-sun.night { color: #6366f1; }
+.overlay-hint { font-size: 11px; margin-top: 5px; padding-top: 5px; border-top: 1px solid #f0f0f0; }
+.overlay-hint.placement { color: #b45309; font-weight: 600; }
+
+/* 計測コントロール */
+.measure-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
-.overlay-sun {
+.btn-measure {
+  padding: 6px 10px;
   font-size: 12px;
-  color: #d97706;
+  font-weight: 600;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(4px);
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #374151;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  transition: all 0.15s;
+  white-space: nowrap;
 }
+.btn-measure:hover { border-color: #f59e0b; }
+.btn-measure.active { background: rgba(245,158,11,0.95); color: white; border-color: #f59e0b; }
 
-.overlay-sun.night {
-  color: #6366f1;
+.btn-measure-clear {
+  padding: 5px 8px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(4px);
+  border: 1px solid #fca5a5;
+  border-radius: 5px;
+  cursor: pointer;
+  color: #ef4444;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  transition: all 0.15s;
+  white-space: nowrap;
 }
+.btn-measure-clear:hover { background: #fef2f2; }
 
-/* 凡例 */
-.legend {
-  background: rgba(255, 255, 255, 0.92);
+/* 計測結果 */
+.measure-result {
+  background: rgba(255,255,255,0.95);
   backdrop-filter: blur(4px);
   border-radius: 8px;
   padding: 8px 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  min-width: 190px;
+  border-left: 3px solid #f59e0b;
+}
+
+.measure-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 2px 0;
+  gap: 12px;
+}
+.measure-row span { color: #6b7280; }
+.measure-row strong { font-variant-numeric: tabular-nums; color: #1a1a1a; }
+.measure-hint { font-size: 10px; color: #9ca3af; margin-top: 4px; }
+
+/* 凡例 */
+.legend {
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(4px);
+  border-radius: 8px;
+  padding: 7px 11px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #374151;
-}
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #374151; }
 
-.legend-color {
-  display: inline-block;
-  width: 16px;
-  height: 12px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.legend-color.panel {
-  background: rgba(59, 130, 246, 0.65);
-  border: 1.5px solid #1d4ed8;
-}
-
-.legend-color.shadow {
-  background: rgba(30, 41, 59, 0.45);
-  border: 1px solid #475569;
-}
-
-.legend-color.ref {
-  background: #ef4444;
-  border-radius: 50%;
-  width: 12px;
-  height: 12px;
-}
+.legend-color { display: inline-block; width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.legend-color.panel { background: rgba(59,130,246,0.68); border: 1.5px solid #1d4ed8; }
+.legend-color.shadow { background: rgba(30,41,59,0.42); border: 1px solid #475569; }
+.legend-color.ref { background: #ef4444; border-radius: 50%; width: 10px; height: 10px; }
+.legend-color.measure { background: #f59e0b; border-radius: 2px; }
