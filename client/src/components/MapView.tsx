@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { GeoPoint, SunPosition, MapStyle } from '../types';
+import { FieldInstallation, SunPosition, MapStyle, ShadingResult } from '../types';
 import { haversineDistance, polygonArea } from '../lib/geoUtils';
 import './MapView.css';
 
 interface Props {
-  location: GeoPoint;
+  installations: FieldInstallation[];
+  activeId: string;
   panelGeoJSON: GeoJSON.FeatureCollection;
   shadowGeoJSON: GeoJSON.FeatureCollection;
   refPointGeoJSON: GeoJSON.FeatureCollection;
@@ -16,6 +17,7 @@ interface Props {
   mapStyle: MapStyle;
   placementMode: boolean;
   onMapClick: (lng: number, lat: number) => void;
+  combinedShading: ShadingResult;
 }
 
 const SRC_PANELS = 'panels';
@@ -53,11 +55,18 @@ function measurePointsGeoJSON(pts: [number, number][]): GeoJSON.FeatureCollectio
   };
 }
 
+const DEFAULT_LOCATION = { lat: 36.4028, lng: 138.2497 };
+
 export default function MapView({
-  location, panelGeoJSON, shadowGeoJSON, refPointGeoJSON,
+  installations, activeId, panelGeoJSON, shadowGeoJSON, refPointGeoJSON,
   sunPosition, timeMinutes, dateStr,
   mapStyle, placementMode, onMapClick,
+  combinedShading,
 }: Props) {
+  const location = installations.find((i) => i.id === activeId)?.location
+    ?? installations[0]?.location
+    ?? DEFAULT_LOCATION;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const initializedRef = useRef(false);
@@ -121,14 +130,14 @@ export default function MapView({
       // 影
       map.addLayer({ id: 'shadow-fill', type: 'fill', source: SRC_SHADOWS,
         paint: { 'fill-color': '#1e293b', 'fill-opacity': 0.42 } });
-      // パネル
+      // パネル（藤棚=青 / 法面=オレンジ）
       map.addLayer({ id: 'panel-fill', type: 'fill', source: SRC_PANELS,
-        paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.68 } });
+        paint: { 'fill-color': ['match', ['get', 'installationType'], 'slope', '#f97316', '#3b82f6'], 'fill-opacity': 0.68 } });
       map.addLayer({ id: 'panel-outline', type: 'line', source: SRC_PANELS,
-        paint: { 'line-color': '#1d4ed8', 'line-width': 1.5 } });
-      // 基準点
+        paint: { 'line-color': ['match', ['get', 'installationType'], 'slope', '#c2410c', '#1d4ed8'], 'line-width': 1.5 } });
+      // 基準点（藤棚=青 / 法面=オレンジ）
       map.addLayer({ id: 'ref-circle', type: 'circle', source: SRC_REF,
-        paint: { 'circle-radius': 6, 'circle-color': '#ef4444', 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } });
+        paint: { 'circle-radius': 6, 'circle-color': ['match', ['get', 'installationType'], 'slope', '#f97316', '#3b82f6'], 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } });
       // 計測ライン
       map.addLayer({ id: 'measure-line', type: 'line', source: SRC_MEASURE_LINE,
         paint: { 'line-color': '#f59e0b', 'line-width': 2, 'line-dasharray': [4, 2] } });
@@ -162,7 +171,7 @@ export default function MapView({
   // 地点変更でマップ移動
   useEffect(() => {
     mapRef.current?.flyTo({ center: [location.lng, location.lat], zoom: 18, duration: 1000 });
-  }, [location]);
+  }, [location.lat, location.lng]);
 
   // 計測ライン更新
   useEffect(() => {
@@ -217,6 +226,9 @@ export default function MapView({
           ) : (
             <div className="overlay-sun">☀ 高度 {sunPosition.altitude.toFixed(1)}° / 方位 {sunPosition.azimuth.toFixed(1)}°</div>
           )}
+          {installations.length > 1 && !isNight && (
+            <div className="overlay-shading">🌤 合計遮光率 {combinedShading.shadingRatioPct.toFixed(1)}%</div>
+          )}
           {placementMode && (
             <div className="overlay-hint placement">🎯 クリックしてパネル配置位置を指定</div>
           )}
@@ -258,7 +270,12 @@ export default function MapView({
       {/* 凡例 */}
       <div className="map-overlay bottom-left">
         <div className="legend">
-          <div className="legend-item"><span className="legend-color panel"></span>パネル</div>
+          {installations.some((i) => i.installationType === 'pergola') && (
+            <div className="legend-item"><span className="legend-color panel"></span>藤棚パネル</div>
+          )}
+          {installations.some((i) => i.installationType === 'slope') && (
+            <div className="legend-item"><span className="legend-color panel-slope"></span>法面パネル</div>
+          )}
           <div className="legend-item"><span className="legend-color shadow"></span>影</div>
           <div className="legend-item"><span className="legend-color ref"></span>基準点</div>
           {measurePts.length > 0 && <div className="legend-item"><span className="legend-color measure"></span>計測</div>}

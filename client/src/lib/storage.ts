@@ -1,14 +1,12 @@
 import { DesignCase } from '../types';
 
-const KEY = 'solar-sharing-designs';
+const KEY = 'solar-sharing-designs-v2';
 
 export function loadDesigns(): DesignCase[] {
   try {
     const raw = localStorage.getItem(KEY);
     return raw ? (JSON.parse(raw) as DesignCase[]) : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 export function saveDesigns(cases: DesignCase[]): void {
