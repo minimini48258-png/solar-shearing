@@ -69,11 +69,11 @@ export default function App() {
   // ===== 共有 =====
   const [shareCopied, setShareCopied] = useState(false);
 
-  // ===== 地形段差 =====
+  // ===== 地形段差（ポリゴン描画） =====
   const [terrainElevations, setTerrainElevations] = useState<TerrainElevation[]>([]);
-  const [terrainPlacementMode, setTerrainPlacementMode] = useState(false);
+  const [terrainDrawingMode, setTerrainDrawingMode] = useState(false);
+  const [drawingVertices, setDrawingVertices] = useState<[number, number][]>([]);
   const [pendingTerrainHeight, setPendingTerrainHeight] = useState(2);
-  const [pendingTerrainRadius, setPendingTerrainRadius] = useState(20);
 
   // ===== 日平均遮光率 =====
   const [dailyAvgResults, setDailyAvgResults] = useState<Record<string, number>>({});
@@ -233,25 +233,38 @@ export default function App() {
     if (placementMode) {
       updateActiveLocation({ lat, lng });
       setPlacementMode(false);
-    } else if (terrainPlacementMode) {
-      setTerrainElevations((prev) => [...prev, {
-        id: `terrain-${Date.now()}`,
-        label: `+${pendingTerrainHeight}m`,
-        location: { lat, lng },
-        radiusM: pendingTerrainRadius,
-        heightM: pendingTerrainHeight,
-      }]);
-      setTerrainPlacementMode(false);
+    } else if (terrainDrawingMode) {
+      // 描画モード: 頂点を追加
+      setDrawingVertices((prev) => [...prev, [lng, lat]]);
     }
-  }, [placementMode, terrainPlacementMode, pendingTerrainHeight, pendingTerrainRadius, updateActiveLocation]);
+  }, [placementMode, terrainDrawingMode, updateActiveLocation]);
 
   // ===== 地形段差操作 =====
   const handleRemoveTerrain = useCallback((id: string) => {
     setTerrainElevations((prev) => prev.filter((t) => t.id !== id));
   }, []);
-  const handleTerrainPlacementToggle = useCallback(() => {
-    setTerrainPlacementMode((p) => !p);
+  const handleStartDrawing = useCallback(() => {
+    setTerrainDrawingMode(true);
+    setDrawingVertices([]);
     setPlacementMode(false);
+  }, []);
+  const handleCompleteDrawing = useCallback(() => {
+    if (drawingVertices.length < 3) return;
+    setTerrainElevations((prev) => [...prev, {
+      id: `terrain-${Date.now()}`,
+      label: `+${pendingTerrainHeight}m`,
+      heightM: pendingTerrainHeight,
+      polygon: drawingVertices,
+    }]);
+    setDrawingVertices([]);
+    setTerrainDrawingMode(false);
+  }, [drawingVertices, pendingTerrainHeight]);
+  const handleCancelDrawing = useCallback(() => {
+    setDrawingVertices([]);
+    setTerrainDrawingMode(false);
+  }, []);
+  const handleUndoVertex = useCallback(() => {
+    setDrawingVertices((prev) => prev.slice(0, -1));
   }, []);
 
   // ドラッグで基準点位置を変更
@@ -380,11 +393,13 @@ export default function App() {
         onCalcDailyAvg={handleCalcDailyAvg}
         terrainElevations={terrainElevations}
         pendingTerrainHeight={pendingTerrainHeight}
-        pendingTerrainRadius={pendingTerrainRadius}
-        terrainPlacementMode={terrainPlacementMode}
+        terrainDrawingMode={terrainDrawingMode}
+        drawingVertexCount={drawingVertices.length}
         onTerrainHeightChange={setPendingTerrainHeight}
-        onTerrainRadiusChange={setPendingTerrainRadius}
-        onTerrainPlacementToggle={handleTerrainPlacementToggle}
+        onStartDrawing={handleStartDrawing}
+        onCompleteDrawing={handleCompleteDrawing}
+        onCancelDrawing={handleCancelDrawing}
+        onUndoVertex={handleUndoVertex}
         onRemoveTerrain={handleRemoveTerrain}
       />
       <MapView
@@ -404,7 +419,8 @@ export default function App() {
         terrainZoneGeoJSON={terrainZoneGeoJSON}
         terrainLabelGeoJSON={terrainLabelGeoJSON}
         elevatedShadowGeoJSON={elevatedShadowGeoJSON}
-        terrainPlacementMode={terrainPlacementMode}
+        terrainDrawingMode={terrainDrawingMode}
+        drawingVertices={drawingVertices}
       />
     </div>
   );

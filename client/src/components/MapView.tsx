@@ -22,7 +22,8 @@ interface Props {
   terrainZoneGeoJSON: GeoJSON.FeatureCollection;
   terrainLabelGeoJSON: GeoJSON.FeatureCollection;
   elevatedShadowGeoJSON: GeoJSON.FeatureCollection;
-  terrainPlacementMode: boolean;
+  terrainDrawingMode: boolean;
+  drawingVertices: [number, number][];
 }
 
 const SRC_PANELS = 'panels';
@@ -33,6 +34,8 @@ const SRC_MEASURE_PTS = 'measure-pts';
 const SRC_TERRAIN_ZONES = 'terrain-zones';
 const SRC_TERRAIN_LABELS = 'terrain-labels';
 const SRC_ELEVATED_SHADOWS = 'elevated-shadows';
+const SRC_DRAWING = 'drawing-preview';
+const SRC_DRAWING_PTS = 'drawing-pts';
 const LAYER_OSM = 'osm-tiles';
 const LAYER_SAT = 'satellite-tiles';
 
@@ -72,7 +75,7 @@ export default function MapView({
   combinedShading,
   onInstLocationChange,
   terrainZoneGeoJSON, terrainLabelGeoJSON, elevatedShadowGeoJSON,
-  terrainPlacementMode,
+  terrainDrawingMode, drawingVertices,
 }: Props) {
   const location = installations.find((i) => i.id === activeId)?.location
     ?? installations[0]?.location
@@ -104,6 +107,9 @@ export default function MapView({
 
   // 3D地形
   const [terrain3D, setTerrain3D] = useState(false);
+
+  // 描画プレビュー用カーソル位置
+  const [previewCursor, setPreviewCursor] = useState<[number, number] | null>(null);
 
   // 計測ツール
   const [measureActive, setMeasureActive] = useState(false);
@@ -163,6 +169,8 @@ export default function MapView({
       map.addSource(SRC_REF,              { type: 'geojson', data: refPtRef.current });
       map.addSource(SRC_MEASURE_LINE,     { type: 'geojson', data: EMPTY_FC });
       map.addSource(SRC_MEASURE_PTS,      { type: 'geojson', data: EMPTY_FC });
+      map.addSource(SRC_DRAWING,          { type: 'geojson', data: EMPTY_FC });
+      map.addSource(SRC_DRAWING_PTS,      { type: 'geojson', data: EMPTY_FC });
 
       // 地形段差ゾーン（一番下）
       map.addLayer({ id: 'terrain-zone-fill', type: 'fill', source: SRC_TERRAIN_ZONES,
@@ -189,6 +197,13 @@ export default function MapView({
       // 計測点
       map.addLayer({ id: 'measure-pts', type: 'circle', source: SRC_MEASURE_PTS,
         paint: { 'circle-radius': 5, 'circle-color': '#f59e0b', 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
+      // 描画プレビュー（盛り土輪郭描画中）
+      map.addLayer({ id: 'drawing-fill', type: 'fill', source: SRC_DRAWING,
+        paint: { 'fill-color': '#f97316', 'fill-opacity': 0.12 } });
+      map.addLayer({ id: 'drawing-line', type: 'line', source: SRC_DRAWING,
+        paint: { 'line-color': '#f97316', 'line-width': 2.5, 'line-dasharray': [5, 3] } });
+      map.addLayer({ id: 'drawing-pts-layer', type: 'circle', source: SRC_DRAWING_PTS,
+        paint: { 'circle-radius': 5, 'circle-color': '#f97316', 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
       // 地形段差ラベル
       map.addLayer({ id: 'terrain-label', type: 'symbol', source: SRC_TERRAIN_LABELS,
         layout: { 'text-field': ['get', 'label'], 'text-size': 13,
@@ -283,6 +298,48 @@ export default function MapView({
     mapRef.current?.flyTo({ center: [location.lng, location.lat], zoom: 18, duration: 1000 });
   }, [location.lat, location.lng]);
 
+  // 描画プレビュー更新（drawingVertices + カーソル位置）
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    if (drawingVertices.length === 0) {
+      (map.getSource(SRC_DRAWING) as maplibregl.GeoJSONSource)?.setData(EMPTY_FC);
+      (map.getSource(SRC_DRAWING_PTS) as maplibregl.GeoJSONSource)?.setData(EMPTY_FC);
+      return;
+    }
+    // カーソルを含めた"仮"頂点リスト
+    const pts = previewCursor ? [...drawingVertices, previewCursor] : drawingVertices;
+    const previewFC: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature', id: 0, properties: {},
+        geometry: pts.length >= 3
+          ? { type: 'Polygon', coordinates: [[...pts, pts[0]]] }
+          : { type: 'LineString', coordinates: pts },
+      }],
+    };
+    (map.getSource(SRC_DRAWING) as maplibregl.GeoJSONSource)?.setData(previewFC);
+    (map.getSource(SRC_DRAWING_PTS) as maplibregl.GeoJSONSource)?.setData({
+      type: 'FeatureCollection',
+      features: drawingVertices.map((p, i) => ({
+        type: 'Feature', id: i, properties: {},
+        geometry: { type: 'Point', coordinates: p },
+      })),
+    });
+  }, [drawingVertices, previewCursor]);
+
+  // カーソル追跡（描画モード中のみ）
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!terrainDrawingMode) { setPreviewCursor(null); return; }
+    const handler = (e: maplibregl.MapMouseEvent) => {
+      setPreviewCursor([e.lngLat.lng, e.lngLat.lat]);
+    };
+    map.on('mousemove', handler);
+    return () => { map.off('mousemove', handler); };
+  }, [terrainDrawingMode]);
+
   // 計測ライン更新
   useEffect(() => {
     const map = mapRef.current;
@@ -299,7 +356,7 @@ export default function MapView({
     const handler = (e: maplibregl.MapMouseEvent) => {
       if (justDraggedRef.current || dragStateRef.current.active) return;
       const { lng, lat } = e.lngLat;
-      if (placementMode || terrainPlacementMode) {
+      if (placementMode || terrainDrawingMode) {
         onMapClick(lng, lat);
       } else if (measureActive) {
         setMeasurePts((prev) => [...prev, [lng, lat]]);
@@ -307,14 +364,14 @@ export default function MapView({
     };
     map.on('click', handler);
     return () => { map.off('click', handler); };
-  }, [placementMode, terrainPlacementMode, measureActive, onMapClick]);
+  }, [placementMode, terrainDrawingMode, measureActive, onMapClick]);
 
   // カーソル変更
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    map.getCanvas().style.cursor = (placementMode || terrainPlacementMode || measureActive) ? 'crosshair' : '';
-  }, [placementMode, terrainPlacementMode, measureActive]);
+    map.getCanvas().style.cursor = (placementMode || terrainDrawingMode || measureActive) ? 'crosshair' : '';
+  }, [placementMode, terrainDrawingMode, measureActive]);
 
   const isNight = sunPosition.altitude <= 0;
   const h = Math.floor(timeMinutes / 60) % 24;
@@ -343,8 +400,8 @@ export default function MapView({
           {placementMode && (
             <div className="overlay-hint placement">🎯 クリックしてパネル配置位置を指定</div>
           )}
-          {terrainPlacementMode && (
-            <div className="overlay-hint placement">🏔 クリックして地形段差ゾーンを配置</div>
+          {terrainDrawingMode && (
+            <div className="overlay-hint placement">✏️ クリックして盛り土の頂点を追加 | サイドパネルで「完了」</div>
           )}
         </div>
       </div>

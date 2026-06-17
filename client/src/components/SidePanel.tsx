@@ -55,11 +55,13 @@ interface Props {
   onCalcDailyAvg: () => void;
   terrainElevations: TerrainElevation[];
   pendingTerrainHeight: number;
-  pendingTerrainRadius: number;
-  terrainPlacementMode: boolean;
+  terrainDrawingMode: boolean;
+  drawingVertexCount: number;
   onTerrainHeightChange: (h: number) => void;
-  onTerrainRadiusChange: (r: number) => void;
-  onTerrainPlacementToggle: () => void;
+  onStartDrawing: () => void;
+  onCompleteDrawing: () => void;
+  onCancelDrawing: () => void;
+  onUndoVertex: () => void;
   onRemoveTerrain: (id: string) => void;
 }
 
@@ -107,8 +109,8 @@ export default function SidePanel({
   onExportJSON,
   onShareURL, shareCopied,
   dailyAvgResults, isCalcingDaily, onCalcDailyAvg,
-  terrainElevations, pendingTerrainHeight, pendingTerrainRadius, terrainPlacementMode,
-  onTerrainHeightChange, onTerrainRadiusChange, onTerrainPlacementToggle, onRemoveTerrain,
+  terrainElevations, pendingTerrainHeight, terrainDrawingMode, drawingVertexCount,
+  onTerrainHeightChange, onStartDrawing, onCompleteDrawing, onCancelDrawing, onUndoVertex, onRemoveTerrain,
 }: Props) {
   const [addressInput, setAddressInput] = useState('');
   const [geocoding, setGeocoding] = useState(false);
@@ -321,32 +323,47 @@ export default function SidePanel({
               </>
             )}
 
-            {/* 地形段差ゾーン */}
+            {/* 地形段差ブロック（盛り土・のり面） */}
             <section className="section">
-              <h2>🏔 周辺の地形段差（影の到達先）</h2>
-              <p className="note">
-                段差がある場所を地図に置くと、その高さへの影（紫色）が表示されます。<br />
-                例：北東側に2mの盛り土 → 高さ2m・北東側に配置。
-              </p>
-              <NumInput label="高さ" value={pendingTerrainHeight} onChange={onTerrainHeightChange} min={0.5} max={20} step={0.5} unit="m" />
-              <NumInput label="ゾーン範囲" value={pendingTerrainRadius} onChange={onTerrainRadiusChange} min={5} max={200} step={5} unit="m" />
-              <button
-                className={`btn-placement ${terrainPlacementMode ? 'active' : ''}`}
-                onClick={onTerrainPlacementToggle}
-                style={{ marginTop: 8 }}
-              >
-                {terrainPlacementMode ? '🎯 地図をクリックして配置中…' : '📍 地図上で配置'}
-              </button>
-              {terrainElevations.length > 0 && (
-                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {terrainElevations.map((te) => (
-                    <div key={te.id} className="terrain-item">
-                      <span className="terrain-label">
-                        {te.label}（{te.heightM}m・範囲{te.radiusM}m）
-                      </span>
-                      <button className="btn-danger btn-sm" onClick={() => onRemoveTerrain(te.id)}>削除</button>
+              <h2>🏔 周辺の地形段差（盛り土・のり面）</h2>
+              {!terrainDrawingMode ? (
+                <>
+                  <p className="note">
+                    盛り土やのり面の輪郭を地図上でクリックして描くと、
+                    その高さへの影（紫色）が表示されます。<br />
+                    盛り土の輪郭（橙）と影（紫）が重なる部分が実際の日陰です。
+                  </p>
+                  <NumInput label="盛り土の高さ" value={pendingTerrainHeight} onChange={onTerrainHeightChange} min={0.5} max={20} step={0.5} unit="m" />
+                  <button className="btn-placement" onClick={onStartDrawing} style={{ marginTop: 8 }}>
+                    ✏️ 盛り土の形を地図に描く
+                  </button>
+                  {terrainElevations.length > 0 && (
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {terrainElevations.map((te) => (
+                        <div key={te.id} className="terrain-item">
+                          <span className="terrain-label">{te.label}（{te.polygon.length}頂点）</span>
+                          <button className="btn-danger btn-sm" onClick={() => onRemoveTerrain(te.id)}>削除</button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                </>
+              ) : (
+                <div className="drawing-panel">
+                  <p className="note drawing-active">
+                    ✏️ 地図をクリックして頂点を追加<br />
+                    <strong>{drawingVertexCount}点</strong>追加済み
+                    {drawingVertexCount < 3 ? '（最低3点必要）' : '（描画OK）'}
+                  </p>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button className="btn-primary btn-sm" onClick={onCompleteDrawing} disabled={drawingVertexCount < 3}>
+                      ✅ {drawingVertexCount}点で確定
+                    </button>
+                    <button className="btn-secondary btn-sm" onClick={onUndoVertex} disabled={drawingVertexCount === 0}>
+                      ↩ 1点戻す
+                    </button>
+                    <button className="btn-secondary btn-sm" onClick={onCancelDrawing}>✕ キャンセル</button>
+                  </div>
                 </div>
               )}
             </section>

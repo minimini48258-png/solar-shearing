@@ -75,40 +75,39 @@ export function refPointsToGeoJSON(
   };
 }
 
-// 地形段差ゾーン → GeoJSON（円形ポリゴン近似）
-function geoCircleRing(center: GeoPoint, radiusM: number, n = 32): [number, number][] {
-  const latRad = center.lat * Math.PI / 180;
-  const dLat = radiusM / 111320;
-  const dLng = radiusM / (111320 * Math.cos(latRad));
-  const ring: [number, number][] = Array.from({ length: n }, (_, i) => {
-    const a = (2 * Math.PI * i) / n;
-    return [center.lng + dLng * Math.sin(a), center.lat + dLat * Math.cos(a)];
-  });
-  ring.push(ring[0]);
-  return ring;
-}
-
+// 地形段差ブロック → GeoJSON（任意ポリゴン）
 export function terrainElevationsToGeoJSON(elevations: TerrainElevation[]): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
-    features: elevations.map((e, i) => ({
-      type: 'Feature',
-      id: i,
-      properties: { id: e.id, label: e.label, heightM: e.heightM, radiusM: e.radiusM },
-      geometry: { type: 'Polygon', coordinates: [geoCircleRing(e.location, e.radiusM)] },
-    })),
+    features: elevations
+      .filter((e) => e.polygon.length >= 3)
+      .map((e, i) => ({
+        type: 'Feature',
+        id: i,
+        properties: { id: e.id, label: e.label, heightM: e.heightM },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[...e.polygon, e.polygon[0]]],  // GeoJSON closed ring
+        },
+      })),
   };
 }
 
 export function terrainElevationLabelsToGeoJSON(elevations: TerrainElevation[]): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
-    features: elevations.map((e, i) => ({
-      type: 'Feature',
-      id: i,
-      properties: { id: e.id, label: e.label || `+${e.heightM}m` },
-      geometry: { type: 'Point', coordinates: [e.location.lng, e.location.lat] },
-    })),
+    features: elevations
+      .filter((e) => e.polygon.length >= 1)
+      .map((e, i) => {
+        const cx = e.polygon.reduce((s, p) => s + p[0], 0) / e.polygon.length;
+        const cy = e.polygon.reduce((s, p) => s + p[1], 0) / e.polygon.length;
+        return {
+          type: 'Feature',
+          id: i,
+          properties: { id: e.id, label: e.label || `+${e.heightM}m` },
+          geometry: { type: 'Point', coordinates: [cx, cy] },
+        };
+      }),
   };
 }
 

@@ -69,13 +69,12 @@ export interface ShadingResult {
   coverageRatioPct: number;// パネル面積率 (%)
 }
 
-// ===== 地形段差ゾーン =====
+// ===== 地形段差ブロック =====
 export interface TerrainElevation {
   id: string;
   label: string;
-  location: GeoPoint;
-  radiusM: number;   // ゾーン半径 (m)
-  heightM: number;   // 基準面からの高さ (m)
+  heightM: number;                  // 基準面からの高さ (m)
+  polygon: [number, number][];      // [lng, lat] 頂点配列（未閉合でよい）
 }
 
 // ===== 保存案 =====
