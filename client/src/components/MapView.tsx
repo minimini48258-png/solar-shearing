@@ -21,7 +21,7 @@ interface Props {
   onInstLocationChange: (id: string, loc: GeoPoint) => void;
   terrainZoneGeoJSON: GeoJSON.FeatureCollection;
   terrainLabelGeoJSON: GeoJSON.FeatureCollection;
-  elevatedShadowGeoJSON: GeoJSON.FeatureCollection;
+  terrainShadowGeoJSON: GeoJSON.FeatureCollection;
   terrainDrawingMode: boolean;
   drawingVertices: [number, number][];
 }
@@ -33,7 +33,7 @@ const SRC_MEASURE_LINE = 'measure-line';
 const SRC_MEASURE_PTS = 'measure-pts';
 const SRC_TERRAIN_ZONES = 'terrain-zones';
 const SRC_TERRAIN_LABELS = 'terrain-labels';
-const SRC_ELEVATED_SHADOWS = 'elevated-shadows';
+const SRC_TERRAIN_SHADOW = 'terrain-shadow';
 const SRC_DRAWING = 'drawing-preview';
 const SRC_DRAWING_PTS = 'drawing-pts';
 const LAYER_OSM = 'osm-tiles';
@@ -74,7 +74,7 @@ export default function MapView({
   mapStyle, placementMode, onMapClick,
   combinedShading,
   onInstLocationChange,
-  terrainZoneGeoJSON, terrainLabelGeoJSON, elevatedShadowGeoJSON,
+  terrainZoneGeoJSON, terrainLabelGeoJSON, terrainShadowGeoJSON,
   terrainDrawingMode, drawingVertices,
 }: Props) {
   const location = installations.find((i) => i.id === activeId)?.location
@@ -91,13 +91,13 @@ export default function MapView({
   const refPtRef = useRef(refPointGeoJSON);
   const terrainZoneRef = useRef(terrainZoneGeoJSON);
   const terrainLabelRef = useRef(terrainLabelGeoJSON);
-  const elevatedShadowRef = useRef(elevatedShadowGeoJSON);
+  const terrainShadowRef = useRef(terrainShadowGeoJSON);
   panelRef.current = panelGeoJSON;
   shadowRef.current = shadowGeoJSON;
   refPtRef.current = refPointGeoJSON;
   terrainZoneRef.current = terrainZoneGeoJSON;
   terrainLabelRef.current = terrainLabelGeoJSON;
-  elevatedShadowRef.current = elevatedShadowGeoJSON;
+  terrainShadowRef.current = terrainShadowGeoJSON;
 
   // ドラッグ状態
   const onInstLocationChangeRef = useRef(onInstLocationChange);
@@ -161,10 +161,10 @@ export default function MapView({
 
     map.on('load', () => {
       // データソース
-      map.addSource(SRC_TERRAIN_ZONES,    { type: 'geojson', data: terrainZoneRef.current });
-      map.addSource(SRC_TERRAIN_LABELS,   { type: 'geojson', data: terrainLabelRef.current });
-      map.addSource(SRC_SHADOWS,          { type: 'geojson', data: shadowRef.current });
-      map.addSource(SRC_ELEVATED_SHADOWS, { type: 'geojson', data: elevatedShadowRef.current });
+      map.addSource(SRC_TERRAIN_ZONES,  { type: 'geojson', data: terrainZoneRef.current });
+      map.addSource(SRC_TERRAIN_LABELS, { type: 'geojson', data: terrainLabelRef.current });
+      map.addSource(SRC_TERRAIN_SHADOW, { type: 'geojson', data: terrainShadowRef.current });
+      map.addSource(SRC_SHADOWS,        { type: 'geojson', data: shadowRef.current });
       map.addSource(SRC_PANELS,           { type: 'geojson', data: panelRef.current });
       map.addSource(SRC_REF,              { type: 'geojson', data: refPtRef.current });
       map.addSource(SRC_MEASURE_LINE,     { type: 'geojson', data: EMPTY_FC });
@@ -172,17 +172,17 @@ export default function MapView({
       map.addSource(SRC_DRAWING,          { type: 'geojson', data: EMPTY_FC });
       map.addSource(SRC_DRAWING_PTS,      { type: 'geojson', data: EMPTY_FC });
 
-      // 地形段差ゾーン（一番下）
+      // 盛り土ポリゴン（琥珀色）
       map.addLayer({ id: 'terrain-zone-fill', type: 'fill', source: SRC_TERRAIN_ZONES,
-        paint: { 'fill-color': '#a855f7', 'fill-opacity': 0.15 } });
+        paint: { 'fill-color': '#f59e0b', 'fill-opacity': 0.22 } });
       map.addLayer({ id: 'terrain-zone-outline', type: 'line', source: SRC_TERRAIN_ZONES,
-        paint: { 'line-color': '#a855f7', 'line-width': 2, 'line-dasharray': [4, 2] } });
-      // 通常の影
+        paint: { 'line-color': '#d97706', 'line-width': 2.5 } });
+      // 通常の影（地面）
       map.addLayer({ id: 'shadow-fill', type: 'fill', source: SRC_SHADOWS,
         paint: { 'fill-color': '#1e293b', 'fill-opacity': 0.42 } });
-      // 段差への影（紫）
-      map.addLayer({ id: 'elevated-shadow-fill', type: 'fill', source: SRC_ELEVATED_SHADOWS,
-        paint: { 'fill-color': '#a855f7', 'fill-opacity': 0.5 } });
+      // 盛り土上面に落ちる影（通常の影と同じ暗色でON TOP）
+      map.addLayer({ id: 'terrain-shadow-fill', type: 'fill', source: SRC_TERRAIN_SHADOW,
+        paint: { 'fill-color': '#1e293b', 'fill-opacity': 0.62 } });
       // パネル（藤棚=青 / 法面=オレンジ）
       map.addLayer({ id: 'panel-fill', type: 'fill', source: SRC_PANELS,
         paint: { 'fill-color': ['match', ['get', 'installationType'], 'slope', '#f97316', '#3b82f6'], 'fill-opacity': 0.68 } });
@@ -269,8 +269,8 @@ export default function MapView({
     }
     (map.getSource(SRC_TERRAIN_ZONES) as maplibregl.GeoJSONSource)?.setData(terrainZoneGeoJSON);
     (map.getSource(SRC_TERRAIN_LABELS) as maplibregl.GeoJSONSource)?.setData(terrainLabelGeoJSON);
-    (map.getSource(SRC_ELEVATED_SHADOWS) as maplibregl.GeoJSONSource)?.setData(elevatedShadowGeoJSON);
-  }, [panelGeoJSON, shadowGeoJSON, refPointGeoJSON, terrainZoneGeoJSON, terrainLabelGeoJSON, elevatedShadowGeoJSON]);
+    (map.getSource(SRC_TERRAIN_SHADOW) as maplibregl.GeoJSONSource)?.setData(terrainShadowGeoJSON);
+  }, [panelGeoJSON, shadowGeoJSON, refPointGeoJSON, terrainZoneGeoJSON, terrainLabelGeoJSON, terrainShadowGeoJSON]);
 
   // 地図スタイル切り替え
   useEffect(() => {
@@ -454,9 +454,12 @@ export default function MapView({
           {installations.some((i) => i.installationType === 'slope') && (
             <div className="legend-item"><span className="legend-color panel-slope"></span>法面パネル</div>
           )}
+          {terrainZoneGeoJSON.features.length > 0 && (
+            <div className="legend-item"><span className="legend-color terrain-zone"></span>盛り土</div>
+          )}
           <div className="legend-item"><span className="legend-color shadow"></span>影（地面）</div>
-          {elevatedShadowGeoJSON.features.length > 0 && (
-            <div className="legend-item"><span className="legend-color elevated-shadow"></span>影（段差面）</div>
+          {terrainShadowGeoJSON.features.length > 0 && (
+            <div className="legend-item"><span className="legend-color terrain-shadow-legend"></span>影（盛り土上）</div>
           )}
           <div className="legend-item"><span className="legend-color ref"></span>基準点</div>
           {measurePts.length > 0 && <div className="legend-item"><span className="legend-color measure"></span>計測</div>}

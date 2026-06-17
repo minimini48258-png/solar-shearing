@@ -12,6 +12,7 @@ import { calcShadingResult } from './lib/shadingCalc';
 import { loadDesigns, addDesign, deleteDesign } from './lib/storage';
 import { encodeShare, decodeShare } from './lib/sharing';
 import { calcDailyAverageShadingPct } from './lib/dailyShading';
+import { clipPolygon } from './lib/polygonClip';
 import SidePanel from './components/SidePanel';
 import MapView from './components/MapView';
 import './App.css';
@@ -170,6 +171,34 @@ export default function App() {
 
   const terrainZoneGeoJSON  = useMemo(() => terrainElevationsToGeoJSON(terrainElevations), [terrainElevations]);
   const terrainLabelGeoJSON = useMemo(() => terrainElevationLabelsToGeoJSON(terrainElevations), [terrainElevations]);
+
+  // 盛り土上面に落ちる影 = 段差面影ポリゴン ∩ 盛り土ポリゴン
+  const terrainShadowGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
+    if (terrainElevations.length === 0 || elevatedShadowGeoJSON.features.length === 0) return EMPTY_FC;
+    const features: GeoJSON.Feature[] = [];
+    for (const te of terrainElevations) {
+      if (te.polygon.length < 3) continue;
+      for (const shadowFeat of elevatedShadowGeoJSON.features) {
+        const geom = shadowFeat.geometry as GeoJSON.Polygon;
+        if (!geom || geom.type !== 'Polygon') continue;
+        const ring = geom.coordinates[0] as [number, number][];
+        // GeoJSON の閉合点（先頭=末尾）を除いて渡す
+        const shadowPts: [number, number][] = ring[ring.length - 1][0] === ring[0][0] && ring[ring.length - 1][1] === ring[0][1]
+          ? ring.slice(0, -1) as [number, number][]
+          : ring as [number, number][];
+        const clipped = clipPolygon(shadowPts, te.polygon);
+        if (clipped.length >= 3) {
+          features.push({
+            type: 'Feature',
+            id: features.length,
+            properties: { terrainId: te.id },
+            geometry: { type: 'Polygon', coordinates: [[...clipped, clipped[0]]] },
+          });
+        }
+      }
+    }
+    return features.length > 0 ? { type: 'FeatureCollection', features } : EMPTY_FC;
+  }, [terrainElevations, elevatedShadowGeoJSON]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 全体の遮光率合計
   const combinedShading = useMemo((): ShadingResult => {
@@ -418,7 +447,7 @@ export default function App() {
         onInstLocationChange={handleInstLocationChange}
         terrainZoneGeoJSON={terrainZoneGeoJSON}
         terrainLabelGeoJSON={terrainLabelGeoJSON}
-        elevatedShadowGeoJSON={elevatedShadowGeoJSON}
+        terrainShadowGeoJSON={terrainShadowGeoJSON}
         terrainDrawingMode={terrainDrawingMode}
         drawingVertices={drawingVertices}
       />

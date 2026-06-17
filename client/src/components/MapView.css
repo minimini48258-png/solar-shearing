@@ -158,7 +158,8 @@
 .legend-color { display: inline-block; width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 .legend-color.panel { background: rgba(59,130,246,0.68); border: 1.5px solid #1d4ed8; }
 .legend-color.panel-slope { background: rgba(249,115,22,0.68); border: 1.5px solid #c2410c; }
+.legend-color.terrain-zone { background: rgba(245,158,11,0.5); border: 1.5px solid #d97706; }
 .legend-color.shadow { background: rgba(30,41,59,0.42); border: 1px solid #475569; }
-.legend-color.elevated-shadow { background: rgba(168,85,247,0.55); border: 1.5px solid #7e22ce; }
+.legend-color.terrain-shadow-legend { background: rgba(30,41,59,0.65); border: 1px solid #475569; }
 .legend-color.ref { background: #ef4444; border-radius: 50%; width: 10px; height: 10px; }
 .legend-color.measure { background: #f59e0b; border-radius: 2px; }
