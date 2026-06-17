@@ -3,7 +3,7 @@
  * installationType プロパティを付与して MapLibre の data-driven styling に対応
  */
 
-import { GeoPoint, PanelPolygon, ShadowPolygon, InstallationType } from '../types';
+import { GeoPoint, PanelPolygon, ShadowPolygon, InstallationType, TerrainElevation } from '../types';
 import { localToGeo } from './geoUtils';
 
 type LngLat = [number, number];
@@ -71,6 +71,43 @@ export function refPointsToGeoJSON(
       id: i,
       properties: { id: inst.id, name: inst.name, installationType: inst.installationType },
       geometry: { type: 'Point', coordinates: [inst.location.lng, inst.location.lat] },
+    })),
+  };
+}
+
+// 地形段差ゾーン → GeoJSON（円形ポリゴン近似）
+function geoCircleRing(center: GeoPoint, radiusM: number, n = 32): [number, number][] {
+  const latRad = center.lat * Math.PI / 180;
+  const dLat = radiusM / 111320;
+  const dLng = radiusM / (111320 * Math.cos(latRad));
+  const ring: [number, number][] = Array.from({ length: n }, (_, i) => {
+    const a = (2 * Math.PI * i) / n;
+    return [center.lng + dLng * Math.sin(a), center.lat + dLat * Math.cos(a)];
+  });
+  ring.push(ring[0]);
+  return ring;
+}
+
+export function terrainElevationsToGeoJSON(elevations: TerrainElevation[]): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: elevations.map((e, i) => ({
+      type: 'Feature',
+      id: i,
+      properties: { id: e.id, label: e.label, heightM: e.heightM, radiusM: e.radiusM },
+      geometry: { type: 'Polygon', coordinates: [geoCircleRing(e.location, e.radiusM)] },
+    })),
+  };
+}
+
+export function terrainElevationLabelsToGeoJSON(elevations: TerrainElevation[]): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: elevations.map((e, i) => ({
+      type: 'Feature',
+      id: i,
+      properties: { id: e.id, label: e.label || `+${e.heightM}m` },
+      geometry: { type: 'Point', coordinates: [e.location.lng, e.location.lat] },
     })),
   };
 }

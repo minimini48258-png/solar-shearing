@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { FieldInstallation, SunPosition, MapStyle, ShadingResult } from '../types';
+import { FieldInstallation, SunPosition, MapStyle, ShadingResult, GeoPoint } from '../types';
 import { haversineDistance, polygonArea } from '../lib/geoUtils';
 import './MapView.css';
 
@@ -18,6 +18,11 @@ interface Props {
   placementMode: boolean;
   onMapClick: (lng: number, lat: number) => void;
   combinedShading: ShadingResult;
+  onInstLocationChange: (id: string, loc: GeoPoint) => void;
+  terrainZoneGeoJSON: GeoJSON.FeatureCollection;
+  terrainLabelGeoJSON: GeoJSON.FeatureCollection;
+  elevatedShadowGeoJSON: GeoJSON.FeatureCollection;
+  terrainPlacementMode: boolean;
 }
 
 const SRC_PANELS = 'panels';
@@ -25,6 +30,9 @@ const SRC_SHADOWS = 'shadows';
 const SRC_REF = 'ref-point';
 const SRC_MEASURE_LINE = 'measure-line';
 const SRC_MEASURE_PTS = 'measure-pts';
+const SRC_TERRAIN_ZONES = 'terrain-zones';
+const SRC_TERRAIN_LABELS = 'terrain-labels';
+const SRC_ELEVATED_SHADOWS = 'elevated-shadows';
 const LAYER_OSM = 'osm-tiles';
 const LAYER_SAT = 'satellite-tiles';
 
@@ -62,6 +70,9 @@ export default function MapView({
   sunPosition, timeMinutes, dateStr,
   mapStyle, placementMode, onMapClick,
   combinedShading,
+  onInstLocationChange,
+  terrainZoneGeoJSON, terrainLabelGeoJSON, elevatedShadowGeoJSON,
+  terrainPlacementMode,
 }: Props) {
   const location = installations.find((i) => i.id === activeId)?.location
     ?? installations[0]?.location
@@ -75,9 +86,21 @@ export default function MapView({
   const panelRef = useRef(panelGeoJSON);
   const shadowRef = useRef(shadowGeoJSON);
   const refPtRef = useRef(refPointGeoJSON);
+  const terrainZoneRef = useRef(terrainZoneGeoJSON);
+  const terrainLabelRef = useRef(terrainLabelGeoJSON);
+  const elevatedShadowRef = useRef(elevatedShadowGeoJSON);
   panelRef.current = panelGeoJSON;
   shadowRef.current = shadowGeoJSON;
   refPtRef.current = refPointGeoJSON;
+  terrainZoneRef.current = terrainZoneGeoJSON;
+  terrainLabelRef.current = terrainLabelGeoJSON;
+  elevatedShadowRef.current = elevatedShadowGeoJSON;
+
+  // ドラッグ状態
+  const onInstLocationChangeRef = useRef(onInstLocationChange);
+  onInstLocationChangeRef.current = onInstLocationChange;
+  const dragStateRef = useRef<{ active: boolean; instId: string | null }>({ active: false, instId: null });
+  const justDraggedRef = useRef(false);
 
   // 3D地形
   const [terrain3D, setTerrain3D] = useState(false);
@@ -132,15 +155,26 @@ export default function MapView({
 
     map.on('load', () => {
       // データソース
-      map.addSource(SRC_SHADOWS, { type: 'geojson', data: shadowRef.current });
-      map.addSource(SRC_PANELS,  { type: 'geojson', data: panelRef.current });
-      map.addSource(SRC_REF,     { type: 'geojson', data: refPtRef.current });
-      map.addSource(SRC_MEASURE_LINE, { type: 'geojson', data: EMPTY_FC });
-      map.addSource(SRC_MEASURE_PTS,  { type: 'geojson', data: EMPTY_FC });
+      map.addSource(SRC_TERRAIN_ZONES,    { type: 'geojson', data: terrainZoneRef.current });
+      map.addSource(SRC_TERRAIN_LABELS,   { type: 'geojson', data: terrainLabelRef.current });
+      map.addSource(SRC_SHADOWS,          { type: 'geojson', data: shadowRef.current });
+      map.addSource(SRC_ELEVATED_SHADOWS, { type: 'geojson', data: elevatedShadowRef.current });
+      map.addSource(SRC_PANELS,           { type: 'geojson', data: panelRef.current });
+      map.addSource(SRC_REF,              { type: 'geojson', data: refPtRef.current });
+      map.addSource(SRC_MEASURE_LINE,     { type: 'geojson', data: EMPTY_FC });
+      map.addSource(SRC_MEASURE_PTS,      { type: 'geojson', data: EMPTY_FC });
 
-      // 影
+      // 地形段差ゾーン（一番下）
+      map.addLayer({ id: 'terrain-zone-fill', type: 'fill', source: SRC_TERRAIN_ZONES,
+        paint: { 'fill-color': '#a855f7', 'fill-opacity': 0.15 } });
+      map.addLayer({ id: 'terrain-zone-outline', type: 'line', source: SRC_TERRAIN_ZONES,
+        paint: { 'line-color': '#a855f7', 'line-width': 2, 'line-dasharray': [4, 2] } });
+      // 通常の影
       map.addLayer({ id: 'shadow-fill', type: 'fill', source: SRC_SHADOWS,
         paint: { 'fill-color': '#1e293b', 'fill-opacity': 0.42 } });
+      // 段差への影（紫）
+      map.addLayer({ id: 'elevated-shadow-fill', type: 'fill', source: SRC_ELEVATED_SHADOWS,
+        paint: { 'fill-color': '#a855f7', 'fill-opacity': 0.5 } });
       // パネル（藤棚=青 / 法面=オレンジ）
       map.addLayer({ id: 'panel-fill', type: 'fill', source: SRC_PANELS,
         paint: { 'fill-color': ['match', ['get', 'installationType'], 'slope', '#f97316', '#3b82f6'], 'fill-opacity': 0.68 } });
@@ -148,13 +182,60 @@ export default function MapView({
         paint: { 'line-color': ['match', ['get', 'installationType'], 'slope', '#c2410c', '#1d4ed8'], 'line-width': 1.5 } });
       // 基準点（藤棚=青 / 法面=オレンジ）
       map.addLayer({ id: 'ref-circle', type: 'circle', source: SRC_REF,
-        paint: { 'circle-radius': 6, 'circle-color': ['match', ['get', 'installationType'], 'slope', '#f97316', '#3b82f6'], 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } });
+        paint: { 'circle-radius': 7, 'circle-color': ['match', ['get', 'installationType'], 'slope', '#f97316', '#3b82f6'], 'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff' } });
       // 計測ライン
       map.addLayer({ id: 'measure-line', type: 'line', source: SRC_MEASURE_LINE,
         paint: { 'line-color': '#f59e0b', 'line-width': 2, 'line-dasharray': [4, 2] } });
       // 計測点
       map.addLayer({ id: 'measure-pts', type: 'circle', source: SRC_MEASURE_PTS,
         paint: { 'circle-radius': 5, 'circle-color': '#f59e0b', 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
+      // 地形段差ラベル
+      map.addLayer({ id: 'terrain-label', type: 'symbol', source: SRC_TERRAIN_LABELS,
+        layout: { 'text-field': ['get', 'label'], 'text-size': 13,
+          'text-font': ['Open Sans Bold', 'Open Sans Regular'],
+          'text-offset': [0, -1.2], 'text-anchor': 'bottom' },
+        paint: { 'text-color': '#7e22ce', 'text-halo-color': '#fff', 'text-halo-width': 2 } });
+
+      // ===== 基準点ドラッグ =====
+      map.on('mouseenter', 'ref-circle', () => {
+        if (!dragStateRef.current.active) map.getCanvas().style.cursor = 'grab';
+      });
+      map.on('mouseleave', 'ref-circle', () => {
+        if (!dragStateRef.current.active) map.getCanvas().style.cursor = '';
+      });
+      map.on('mousedown', 'ref-circle', (e) => {
+        e.preventDefault();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const instId = (e as any).features?.[0]?.properties?.id as string | undefined;
+        if (!instId) return;
+        dragStateRef.current = { active: true, instId };
+        map.getCanvas().style.cursor = 'grabbing';
+        map.dragPan.disable();
+      });
+      map.on('mousemove', (e) => {
+        if (!dragStateRef.current.active) return;
+        const { lng, lat } = e.lngLat;
+        const modified: GeoJSON.FeatureCollection = {
+          ...refPtRef.current,
+          features: refPtRef.current.features.map((f) =>
+            f.properties?.id === dragStateRef.current.instId
+              ? { ...f, geometry: { type: 'Point' as const, coordinates: [lng, lat] } }
+              : f
+          ),
+        };
+        (map.getSource(SRC_REF) as maplibregl.GeoJSONSource)?.setData(modified);
+      });
+      map.on('mouseup', (e) => {
+        if (!dragStateRef.current.active) return;
+        const { lng, lat } = e.lngLat;
+        const instId = dragStateRef.current.instId;
+        dragStateRef.current = { active: false, instId: null };
+        map.dragPan.enable();
+        map.getCanvas().style.cursor = '';
+        justDraggedRef.current = true;
+        setTimeout(() => { justDraggedRef.current = false; }, 80);
+        if (instId) onInstLocationChangeRef.current(instId, { lat, lng });
+      });
     });
 
     mapRef.current = map;
@@ -168,8 +249,13 @@ export default function MapView({
     if (!map || !map.isStyleLoaded()) return;
     (map.getSource(SRC_PANELS) as maplibregl.GeoJSONSource)?.setData(panelGeoJSON);
     (map.getSource(SRC_SHADOWS) as maplibregl.GeoJSONSource)?.setData(shadowGeoJSON);
-    (map.getSource(SRC_REF) as maplibregl.GeoJSONSource)?.setData(refPointGeoJSON);
-  }, [panelGeoJSON, shadowGeoJSON, refPointGeoJSON]);
+    if (!dragStateRef.current.active) {
+      (map.getSource(SRC_REF) as maplibregl.GeoJSONSource)?.setData(refPointGeoJSON);
+    }
+    (map.getSource(SRC_TERRAIN_ZONES) as maplibregl.GeoJSONSource)?.setData(terrainZoneGeoJSON);
+    (map.getSource(SRC_TERRAIN_LABELS) as maplibregl.GeoJSONSource)?.setData(terrainLabelGeoJSON);
+    (map.getSource(SRC_ELEVATED_SHADOWS) as maplibregl.GeoJSONSource)?.setData(elevatedShadowGeoJSON);
+  }, [panelGeoJSON, shadowGeoJSON, refPointGeoJSON, terrainZoneGeoJSON, terrainLabelGeoJSON, elevatedShadowGeoJSON]);
 
   // 地図スタイル切り替え
   useEffect(() => {
@@ -205,14 +291,15 @@ export default function MapView({
     (map.getSource(SRC_MEASURE_PTS) as maplibregl.GeoJSONSource)?.setData(measurePointsGeoJSON(measurePts));
   }, [measurePts]);
 
-  // クリックイベント（配置 or 計測）
+  // クリックイベント（配置 / 地形配置 / 計測）
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     const handler = (e: maplibregl.MapMouseEvent) => {
+      if (justDraggedRef.current || dragStateRef.current.active) return;
       const { lng, lat } = e.lngLat;
-      if (placementMode) {
+      if (placementMode || terrainPlacementMode) {
         onMapClick(lng, lat);
       } else if (measureActive) {
         setMeasurePts((prev) => [...prev, [lng, lat]]);
@@ -220,14 +307,14 @@ export default function MapView({
     };
     map.on('click', handler);
     return () => { map.off('click', handler); };
-  }, [placementMode, measureActive, onMapClick]);
+  }, [placementMode, terrainPlacementMode, measureActive, onMapClick]);
 
   // カーソル変更
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    map.getCanvas().style.cursor = (placementMode || measureActive) ? 'crosshair' : '';
-  }, [placementMode, measureActive]);
+    map.getCanvas().style.cursor = (placementMode || terrainPlacementMode || measureActive) ? 'crosshair' : '';
+  }, [placementMode, terrainPlacementMode, measureActive]);
 
   const isNight = sunPosition.altitude <= 0;
   const h = Math.floor(timeMinutes / 60) % 24;
@@ -255,6 +342,9 @@ export default function MapView({
           )}
           {placementMode && (
             <div className="overlay-hint placement">🎯 クリックしてパネル配置位置を指定</div>
+          )}
+          {terrainPlacementMode && (
+            <div className="overlay-hint placement">🏔 クリックして地形段差ゾーンを配置</div>
           )}
         </div>
       </div>
@@ -307,7 +397,10 @@ export default function MapView({
           {installations.some((i) => i.installationType === 'slope') && (
             <div className="legend-item"><span className="legend-color panel-slope"></span>法面パネル</div>
           )}
-          <div className="legend-item"><span className="legend-color shadow"></span>影</div>
+          <div className="legend-item"><span className="legend-color shadow"></span>影（地面）</div>
+          {elevatedShadowGeoJSON.features.length > 0 && (
+            <div className="legend-item"><span className="legend-color elevated-shadow"></span>影（段差面）</div>
+          )}
           <div className="legend-item"><span className="legend-color ref"></span>基準点</div>
           {measurePts.length > 0 && <div className="legend-item"><span className="legend-color measure"></span>計測</div>}
         </div>

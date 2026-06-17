@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   FieldInstallation, PanelConfig, SlopeConfig, AnyConfig,
-  InstallationType, MapStyle, DesignCase, ShadingResult, SunPosition, GroundSlope,
+  InstallationType, MapStyle, DesignCase, ShadingResult, SunPosition, GroundSlope, TerrainElevation,
 } from '../types';
 import { geocodeAddress } from '../lib/geoUtils';
 import { SEASON_PRESETS, getSunTimes } from '../lib/solar';
@@ -53,6 +53,14 @@ interface Props {
   dailyAvgResults: Record<string, number>;
   isCalcingDaily: boolean;
   onCalcDailyAvg: () => void;
+  terrainElevations: TerrainElevation[];
+  pendingTerrainHeight: number;
+  pendingTerrainRadius: number;
+  terrainPlacementMode: boolean;
+  onTerrainHeightChange: (h: number) => void;
+  onTerrainRadiusChange: (r: number) => void;
+  onTerrainPlacementToggle: () => void;
+  onRemoveTerrain: (id: string) => void;
 }
 
 function NumInput({ label, value, onChange, min, max, step, unit }: {
@@ -99,6 +107,8 @@ export default function SidePanel({
   onExportJSON,
   onShareURL, shareCopied,
   dailyAvgResults, isCalcingDaily, onCalcDailyAvg,
+  terrainElevations, pendingTerrainHeight, pendingTerrainRadius, terrainPlacementMode,
+  onTerrainHeightChange, onTerrainRadiusChange, onTerrainPlacementToggle, onRemoveTerrain,
 }: Props) {
   const [addressInput, setAddressInput] = useState('');
   const [geocoding, setGeocoding] = useState(false);
@@ -310,6 +320,36 @@ export default function SidePanel({
                 </section>
               </>
             )}
+
+            {/* 地形段差ゾーン */}
+            <section className="section">
+              <h2>🏔 周辺の地形段差（影の到達先）</h2>
+              <p className="note">
+                段差がある場所を地図に置くと、その高さへの影（紫色）が表示されます。<br />
+                例：北東側に2mの盛り土 → 高さ2m・北東側に配置。
+              </p>
+              <NumInput label="高さ" value={pendingTerrainHeight} onChange={onTerrainHeightChange} min={0.5} max={20} step={0.5} unit="m" />
+              <NumInput label="ゾーン範囲" value={pendingTerrainRadius} onChange={onTerrainRadiusChange} min={5} max={200} step={5} unit="m" />
+              <button
+                className={`btn-placement ${terrainPlacementMode ? 'active' : ''}`}
+                onClick={onTerrainPlacementToggle}
+                style={{ marginTop: 8 }}
+              >
+                {terrainPlacementMode ? '🎯 地図をクリックして配置中…' : '📍 地図上で配置'}
+              </button>
+              {terrainElevations.length > 0 && (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {terrainElevations.map((te) => (
+                    <div key={te.id} className="terrain-item">
+                      <span className="terrain-label">
+                        {te.label}（{te.heightM}m・範囲{te.radiusM}m）
+                      </span>
+                      <button className="btn-danger btn-sm" onClick={() => onRemoveTerrain(te.id)}>削除</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
 
             {/* 地図スタイル */}
             <section className="section section-compact">

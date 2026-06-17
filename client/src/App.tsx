@@ -1,13 +1,13 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   FieldInstallation, PanelConfig, SlopeConfig, AnyConfig,
-  InstallationType, MapStyle, DesignCase, ShadingResult,
+  InstallationType, MapStyle, DesignCase, ShadingResult, TerrainElevation,
 } from './types';
 import { getSunPosition, SEASON_PRESETS } from './lib/solar';
 import { generatePanels, getPanelSummary } from './lib/panelGeometry';
 import { generateSlopePanels, getSlopeSummary } from './lib/slopePanelGeometry';
-import { computeShadows } from './lib/shadow';
-import { panelsToGeoJSON, shadowsToGeoJSON, refPointsToGeoJSON, mergeFeatureCollections } from './lib/geojson';
+import { computeShadows, shiftShadowsForElevation } from './lib/shadow';
+import { panelsToGeoJSON, shadowsToGeoJSON, refPointsToGeoJSON, mergeFeatureCollections, terrainElevationsToGeoJSON, terrainElevationLabelsToGeoJSON } from './lib/geojson';
 import { calcShadingResult } from './lib/shadingCalc';
 import { loadDesigns, addDesign, deleteDesign } from './lib/storage';
 import { encodeShare, decodeShare } from './lib/sharing';
@@ -68,6 +68,12 @@ export default function App() {
 
   // ===== 共有 =====
   const [shareCopied, setShareCopied] = useState(false);
+
+  // ===== 地形段差 =====
+  const [terrainElevations, setTerrainElevations] = useState<TerrainElevation[]>([]);
+  const [terrainPlacementMode, setTerrainPlacementMode] = useState(false);
+  const [pendingTerrainHeight, setPendingTerrainHeight] = useState(2);
+  const [pendingTerrainRadius, setPendingTerrainRadius] = useState(20);
 
   // ===== 日平均遮光率 =====
   const [dailyAvgResults, setDailyAvgResults] = useState<Record<string, number>>({});
@@ -132,7 +138,7 @@ export default function App() {
       const summary  = inst.installationType === 'pergola'
         ? getPanelSummary(inst.config as PanelConfig)
         : getSlopeSummary(inst.config as SlopeConfig);
-      return { inst, sunPos, panelGJ, shadowGJ, shading, summary };
+      return { inst, sunPos, shadows, panelGJ, shadowGJ, shading, summary };
     });
   }, [installations, datetime]);
 
@@ -146,6 +152,24 @@ export default function App() {
   const panelGeoJSON  = useMemo(() => mergeFeatureCollections(installationData.map((d) => d.panelGJ)), [installationData]);
   const shadowGeoJSON = useMemo(() => mergeFeatureCollections(installationData.map((d) => d.shadowGJ)), [installationData]);
   const refGeoJSON    = useMemo(() => refPointsToGeoJSON(installations), [installations]);
+
+  // 地形段差への影（各TerrainElevationに対して影ポリゴンをシフト）
+  const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+  const elevatedShadowGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
+    if (terrainElevations.length === 0) return EMPTY_FC;
+    const collections: GeoJSON.FeatureCollection[] = [];
+    for (const te of terrainElevations) {
+      for (const d of installationData) {
+        const elevated = shiftShadowsForElevation(d.shadows, d.sunPos, te.heightM);
+        if (elevated.length === 0) continue;
+        collections.push(shadowsToGeoJSON(elevated, d.inst.location, d.inst.installationType, `elev-${te.id}`));
+      }
+    }
+    return collections.length > 0 ? mergeFeatureCollections(collections) : EMPTY_FC;
+  }, [terrainElevations, installationData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const terrainZoneGeoJSON  = useMemo(() => terrainElevationsToGeoJSON(terrainElevations), [terrainElevations]);
+  const terrainLabelGeoJSON = useMemo(() => terrainElevationLabelsToGeoJSON(terrainElevations), [terrainElevations]);
 
   // 全体の遮光率合計
   const combinedShading = useMemo((): ShadingResult => {
@@ -209,8 +233,31 @@ export default function App() {
     if (placementMode) {
       updateActiveLocation({ lat, lng });
       setPlacementMode(false);
+    } else if (terrainPlacementMode) {
+      setTerrainElevations((prev) => [...prev, {
+        id: `terrain-${Date.now()}`,
+        label: `+${pendingTerrainHeight}m`,
+        location: { lat, lng },
+        radiusM: pendingTerrainRadius,
+        heightM: pendingTerrainHeight,
+      }]);
+      setTerrainPlacementMode(false);
     }
-  }, [placementMode, updateActiveLocation]);
+  }, [placementMode, terrainPlacementMode, pendingTerrainHeight, pendingTerrainRadius, updateActiveLocation]);
+
+  // ===== 地形段差操作 =====
+  const handleRemoveTerrain = useCallback((id: string) => {
+    setTerrainElevations((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  const handleTerrainPlacementToggle = useCallback(() => {
+    setTerrainPlacementMode((p) => !p);
+    setPlacementMode(false);
+  }, []);
+
+  // ドラッグで基準点位置を変更
+  const handleInstLocationChange = useCallback((id: string, location: { lat: number; lng: number }) => {
+    updateInstallation(id, { location });
+  }, [updateInstallation]);
 
   // ===== 保存案 =====
 
@@ -331,6 +378,14 @@ export default function App() {
         dailyAvgResults={dailyAvgResults}
         isCalcingDaily={isCalcingDaily}
         onCalcDailyAvg={handleCalcDailyAvg}
+        terrainElevations={terrainElevations}
+        pendingTerrainHeight={pendingTerrainHeight}
+        pendingTerrainRadius={pendingTerrainRadius}
+        terrainPlacementMode={terrainPlacementMode}
+        onTerrainHeightChange={setPendingTerrainHeight}
+        onTerrainRadiusChange={setPendingTerrainRadius}
+        onTerrainPlacementToggle={handleTerrainPlacementToggle}
+        onRemoveTerrain={handleRemoveTerrain}
       />
       <MapView
         panelGeoJSON={panelGeoJSON}
@@ -345,6 +400,11 @@ export default function App() {
         onMapClick={handleMapClick}
         combinedShading={combinedShading}
         installations={installations}
+        onInstLocationChange={handleInstLocationChange}
+        terrainZoneGeoJSON={terrainZoneGeoJSON}
+        terrainLabelGeoJSON={terrainLabelGeoJSON}
+        elevatedShadowGeoJSON={elevatedShadowGeoJSON}
+        terrainPlacementMode={terrainPlacementMode}
       />
     </div>
   );

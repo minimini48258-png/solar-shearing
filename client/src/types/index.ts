@@ -69,6 +69,15 @@ export interface ShadingResult {
   coverageRatioPct: number;// パネル面積率 (%)
 }
 
+// ===== 地形段差ゾーン =====
+export interface TerrainElevation {
+  id: string;
+  label: string;
+  location: GeoPoint;
+  radiusM: number;   // ゾーン半径 (m)
+  heightM: number;   // 基準面からの高さ (m)
+}
+
 // ===== 保存案 =====
 export interface DesignCase {
   id: string;

@@ -69,6 +69,28 @@ export function computeShadows(
     .filter((s): s is ShadowPolygon => s !== null);
 }
 
+/**
+ * 標高 heightM の地面への影ポリゴンを返す。
+ * 高さ h の面への影 = 平地影を太陽方向へ h/tan(alt) メートルシフトした位置。
+ */
+export function shiftShadowsForElevation(
+  shadows: ShadowPolygon[],
+  sun: SunPosition,
+  heightM: number
+): ShadowPolygon[] {
+  if (sun.altitude < MIN_ALTITUDE_DEG || heightM <= 0) return [];
+  const tanAlt = Math.tan(sun.altitude * DEG2RAD);
+  if (tanAlt < 0.02) return []; // 太陽高度 <~1.1° は影が遠すぎるためスキップ
+  const azRad = sun.azimuth * DEG2RAD;
+  const shiftM = heightM / tanAlt;
+  const shiftE = shiftM * Math.sin(azRad);
+  const shiftN = shiftM * Math.cos(azRad);
+  return shadows.map((s) => ({
+    ...s,
+    corners: s.corners.map(([e, n]) => [e + shiftE, n + shiftN] as [number, number]),
+  }));
+}
+
 // 影面積の概算（シューレース公式）
 export function estimateShadowArea(shadow: ShadowPolygon): number {
   if (shadow.corners.length < 3) return 0;
