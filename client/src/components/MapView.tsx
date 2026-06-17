@@ -79,6 +79,9 @@ export default function MapView({
   shadowRef.current = shadowGeoJSON;
   refPtRef.current = refPointGeoJSON;
 
+  // 3D地形
+  const [terrain3D, setTerrain3D] = useState(false);
+
   // 計測ツール
   const [measureActive, setMeasureActive] = useState(false);
   const [measurePts, setMeasurePts] = useState<[number, number][]>([]);
@@ -105,6 +108,14 @@ export default function MapView({
             attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors' },
           'satellite': { type: 'raster', tiles: SAT_TILES, tileSize: 256, maxzoom: 18,
             attribution: 'Esri, DigitalGlobe, Earthstar Geographics' },
+          'terrain-dem': {
+            type: 'raster-dem',
+            tiles: ['https://cyberjapandata.gsi.go.jp/xyz/terrainrgb/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            maxzoom: 14,
+            encoding: 'mapbox',
+            attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>',
+          },
         },
         layers: [
           { id: LAYER_OSM, type: 'raster', source: 'osm' },
@@ -167,6 +178,19 @@ export default function MapView({
     map.setLayoutProperty(LAYER_OSM, 'visibility', mapStyle === 'street' ? 'visible' : 'none');
     map.setLayoutProperty(LAYER_SAT, 'visibility', mapStyle === 'satellite' ? 'visible' : 'none');
   }, [mapStyle]);
+
+  // 3D地形トグル
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    if (terrain3D) {
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.5 });
+      map.easeTo({ pitch: 45, duration: 600 });
+    } else {
+      map.setTerrain(null);
+      map.easeTo({ pitch: 0, duration: 600 });
+    }
+  }, [terrain3D]);
 
   // 地点変更でマップ移動
   useEffect(() => {
@@ -235,9 +259,16 @@ export default function MapView({
         </div>
       </div>
 
-      {/* 計測ツールボタン */}
+      {/* 計測ツール・3D地形ボタン */}
       <div className="map-overlay top-right-measure">
         <div className="measure-controls">
+          <button
+            className={`btn-terrain ${terrain3D ? 'active' : ''}`}
+            onClick={() => setTerrain3D((v) => !v)}
+            title="国土地理院の標高データを使用した3D地形表示（日本国内のみ）"
+          >
+            {terrain3D ? '🏔 3D地形 ON' : '🏔 3D地形'}
+          </button>
           <button
             className={`btn-measure ${measureActive ? 'active' : ''}`}
             onClick={() => { setMeasureActive((v) => !v); if (measureActive) setMeasurePts([]); }}

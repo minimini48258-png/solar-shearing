@@ -1,66 +1,77 @@
 /**
  * 影計算モジュール
  *
- * 計算原理（簡易モデル）:
- *  高さ z [m] にある点 (x, y, z) が太陽方位角 A [度, 北から時計回り]、
- *  太陽高度角 α [度] のとき、地表面 (z=0) への投影点:
+ * 計算原理（地盤傾斜対応モデル）:
+ *  パネル頂点 P = (x, y, z) から太陽方向に向かう光線を追い、地盤面との交点を求める。
  *
- *    sx = x − z × sin(A_rad) / tan(α_rad)
- *    sy = y − z × cos(A_rad) / tan(α_rad)
+ *  地盤面の法線ベクトル（上向き）:
+ *    nE = sin(φ) × sin(θ)
+ *    nN = cos(φ) × sin(θ)
+ *    nZ = cos(θ)
+ *  ここで θ = 地盤傾斜角、φ = 傾斜方位（下り方向、北から時計回り）
  *
- * 前提:
+ *  影投影パラメータ T（水平距離係数）:
+ *    T = (nE×x + nN×y + nZ×z) / (nE×sin(Az) + nN×cos(Az) + nZ×tan(α))
+ *
+ *  影の (E, N) 座標:
+ *    sE = x − T × sin(Az)
+ *    sN = y − T × cos(Az)
+ *
+ *  θ=0（平地）のとき T = z/tan(α) となり既存の計算と一致する。
+ *
+ *  前提:
  *  - α > 0°（太陽が地平線より上）のときのみ影を計算
- *  - 地形の起伏・他物体による遮蔽は未考慮（将来の拡張ポイント）
- *  - パネルは剛体平板として扱い、4頂点を独立に投影
+ *  - 地面の起伏は設置ごとに一定傾斜として近似（均一傾斜モデル）
+ *  - 遮蔽物（建物・山）による日影は未考慮
  */
 
 import { PanelPolygon, ShadowPolygon, SunPosition } from '../types';
 
 const DEG2RAD = Math.PI / 180;
-const MIN_ALTITUDE_DEG = 0.5; // これ以下の太陽高度では影計算しない
+const MIN_ALTITUDE_DEG = 0.5;
 
-// 高さ z の点を太陽位置から地表に投影する
-function projectPoint(
-  x: number, y: number, z: number,
-  sunAzRad: number, tanAlt: number
-): [number, number] {
-  const shadowLen = z / tanAlt;  // 水平距離 = 高さ / tan(高度角)
-  return [
-    x - shadowLen * Math.sin(sunAzRad),
-    y - shadowLen * Math.cos(sunAzRad),
-  ];
-}
-
-// パネル群の影ポリゴン群を計算
 export function computeShadows(
   panels: PanelPolygon[],
-  sun: SunPosition
+  sun: SunPosition,
+  groundSlopeAngle = 0,
+  groundFacingAzimuth = 180
 ): ShadowPolygon[] {
   if (sun.altitude < MIN_ALTITUDE_DEG) return [];
 
   const azRad = sun.azimuth * DEG2RAD;
   const tanAlt = Math.tan(sun.altitude * DEG2RAD);
 
+  // 地盤面の上向き法線
+  const sRad = groundSlopeAngle * DEG2RAD;
+  const fRad = groundFacingAzimuth * DEG2RAD;
+  const nE = Math.sin(fRad) * Math.sin(sRad);
+  const nN = Math.cos(fRad) * Math.sin(sRad);
+  const nZ = Math.cos(sRad);
+
+  // 分母（太陽方向と法線の内積）。≤0 なら法面が太陽と逆を向いており影が乗らない
+  const denom = nE * Math.sin(azRad) + nN * Math.cos(azRad) + nZ * tanAlt;
+
   return panels
     .map((panel) => {
       const projectedCorners = panel.corners
         .filter((c) => c.z > 0)
-        .map((c) => projectPoint(c.x, c.y, c.z, azRad, tanAlt));
+        .map((c): [number, number] | null => {
+          if (denom <= 0) return null; // 地盤が太陽と逆向き
+          const T = (nE * c.x + nN * c.y + nZ * c.z) / denom;
+          if (T < 0) return null; // 交点が逆方向（パネル裏側）
+          return [c.x - T * Math.sin(azRad), c.y - T * Math.cos(azRad)];
+        })
+        .filter((p): p is [number, number] => p !== null);
 
       if (projectedCorners.length < 3) return null;
-
-      return {
-        corners: projectedCorners as [number, number][],
-        panelIndex: panel.panelIndex,
-      };
+      return { corners: projectedCorners, panelIndex: panel.panelIndex };
     })
     .filter((s): s is ShadowPolygon => s !== null);
 }
 
-// 影面積の概算（平行四辺形近似）
+// 影面積の概算（シューレース公式）
 export function estimateShadowArea(shadow: ShadowPolygon): number {
   if (shadow.corners.length < 3) return 0;
-  // シューレースの公式（符号付き面積）
   const pts = shadow.corners;
   let area = 0;
   for (let i = 0; i < pts.length; i++) {

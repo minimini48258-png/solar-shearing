@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   FieldInstallation, PanelConfig, SlopeConfig, AnyConfig,
-  InstallationType, MapStyle, DesignCase, ShadingResult, SunPosition,
+  InstallationType, MapStyle, DesignCase, ShadingResult, SunPosition, GroundSlope,
 } from '../types';
 import { geocodeAddress } from '../lib/geoUtils';
 import { SEASON_PRESETS, getSunTimes } from '../lib/solar';
@@ -25,6 +25,7 @@ interface Props {
   onUpdateName: (id: string, name: string) => void;
   activeInst?: FieldInstallation;
   onConfigChange: (c: AnyConfig) => void;
+  onGroundSlopeChange: (gs: GroundSlope) => void;
   onLocationChange: (loc: { lat: number; lng: number }) => void;
   installationData: InstData[];
   combinedShading: ShadingResult;
@@ -87,7 +88,7 @@ function ShadingBar({ pct, color }: { pct: number; color: string }) {
 
 export default function SidePanel({
   installations, activeId, onSelectActive, onAddInstallation, onAddBothTemplate, onRemoveInstallation, onUpdateName,
-  activeInst, onConfigChange, onLocationChange,
+  activeInst, onConfigChange, onGroundSlopeChange, onLocationChange,
   installationData, combinedShading,
   dateStr, onDateChange, timeMinutes, onTimeChange,
   isPlaying, onPlayToggle, playSpeed, onPlaySpeedChange,
@@ -275,6 +276,24 @@ export default function SidePanel({
                       </div>
                     </>
                   )}
+
+                  {/* 地盤傾斜設定 */}
+                  <div className="subsection">
+                    <h3>🏔 地盤傾斜（影の精度向上）</h3>
+                    <NumInput
+                      label="傾斜角"
+                      value={activeInst.groundSlope?.angle ?? 0}
+                      onChange={(v) => onGroundSlopeChange({ angle: v, facingAzimuth: activeInst.groundSlope?.facingAzimuth ?? 180 })}
+                      min={0} max={70} step={1} unit="°"
+                    />
+                    <NumInput
+                      label="傾斜方位"
+                      value={activeInst.groundSlope?.facingAzimuth ?? 180}
+                      onChange={(v) => onGroundSlopeChange({ angle: activeInst.groundSlope?.angle ?? 0, facingAzimuth: v })}
+                      min={0} max={360} step={5} unit="°"
+                    />
+                    <p className="note">0°=平地。段差・のり面がある場合は傾斜角と方位（下り方向）を設定すると影の計算が精確になります。</p>
+                  </div>
 
                   {/* アクティブ設置のサマリー */}
                   {(() => {

@@ -43,6 +43,12 @@ export type AnyConfig = PanelConfig | SlopeConfig;
 export interface PanelPolygon { corners: LocalPoint3D[]; panelIndex: number; }
 export interface ShadowPolygon { corners: [number, number][]; panelIndex: number; }
 
+// ===== 地盤傾斜 =====
+export interface GroundSlope {
+  angle: number;          // 地盤傾斜角 (degrees, 0=平地)
+  facingAzimuth: number;  // 傾斜方位 (degrees from N, 180=南向き斜面)
+}
+
 // ===== 複数設置管理 =====
 export interface FieldInstallation {
   id: string;
@@ -50,6 +56,7 @@ export interface FieldInstallation {
   installationType: InstallationType;
   location: GeoPoint;
   config: AnyConfig;
+  groundSlope?: GroundSlope; // 省略時は平地 (angle=0)
 }
 
 // ===== 遮光率計算結果 =====

@@ -40,6 +40,9 @@ function makeInst(type: InstallationType, suffix: string, loc = DEF_LOC): FieldI
     installationType: type,
     location: loc,
     config: type === 'pergola' ? { ...DEF_PERGOLA } : { ...DEF_SLOPE },
+    groundSlope: type === 'pergola'
+      ? { angle: 0, facingAzimuth: 180 }
+      : { angle: DEF_SLOPE.slopeAngle, facingAzimuth: DEF_SLOPE.facingAzimuth },
   };
 }
 
@@ -118,7 +121,11 @@ export default function App() {
       const panels = inst.installationType === 'pergola'
         ? generatePanels(inst.config as PanelConfig)
         : generateSlopePanels(inst.config as SlopeConfig);
-      const shadows = computeShadows(panels, sunPos);
+      const shadows = computeShadows(
+        panels, sunPos,
+        inst.groundSlope?.angle ?? 0,
+        inst.groundSlope?.facingAzimuth ?? 180
+      );
       const panelGJ  = panelsToGeoJSON(panels, inst.location, inst.installationType, inst.id);
       const shadowGJ = shadowsToGeoJSON(shadows, inst.location, inst.installationType, inst.id);
       const shading  = calcShadingResult(inst.id, inst.config, shadows);
@@ -188,6 +195,10 @@ export default function App() {
 
   const updateActiveConfig = useCallback((config: AnyConfig) => {
     updateInstallation(activeId, { config });
+  }, [activeId, updateInstallation]);
+
+  const updateActiveGroundSlope = useCallback((groundSlope: import('./types').GroundSlope) => {
+    updateInstallation(activeId, { groundSlope });
   }, [activeId, updateInstallation]);
 
   const updateActiveLocation = useCallback((location: { lat: number; lng: number }) => {
@@ -292,6 +303,7 @@ export default function App() {
         onUpdateName={(id, name) => updateInstallation(id, { name })}
         activeInst={activeInst}
         onConfigChange={updateActiveConfig}
+        onGroundSlopeChange={updateActiveGroundSlope}
         onLocationChange={updateActiveLocation}
         installationData={installationData.map((d) => ({ id: d.inst.id, shading: d.shading, summary: d.summary, sunPos: d.sunPos }))}
         combinedShading={combinedShading}

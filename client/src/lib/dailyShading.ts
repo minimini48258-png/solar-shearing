@@ -28,7 +28,11 @@ export function calcDailyAverageShadingPct(
     const dt = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+09:00`);
     const sunPos = getSunPosition(inst.location.lat, inst.location.lng, dt);
     if (sunPos.altitude > 0.5) {
-      const shadows = computeShadows(panels, sunPos);
+      const shadows = computeShadows(
+        panels, sunPos,
+        inst.groundSlope?.angle ?? 0,
+        inst.groundSlope?.facingAzimuth ?? 180
+      );
       const result = calcShadingResult(inst.id, inst.config, shadows);
       samples.push(result.shadingRatioPct);
     }
