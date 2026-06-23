@@ -15,6 +15,7 @@ import { calcDailyAverageShadingPct } from './lib/dailyShading';
 import { clipPolygon } from './lib/polygonClip';
 import SidePanel from './components/SidePanel';
 import MapView from './components/MapView';
+import DrawingView from './components/DrawingView';
 import './App.css';
 
 // ===== デフォルト =====
@@ -75,6 +76,9 @@ export default function App() {
   const [terrainDrawingMode, setTerrainDrawingMode] = useState(false);
   const [drawingVertices, setDrawingVertices] = useState<[number, number][]>([]);
   const [pendingTerrainHeight, setPendingTerrainHeight] = useState(2);
+
+  // ===== 図面ビュー =====
+  const [showDrawing, setShowDrawing] = useState(false);
 
   // ===== 日平均遮光率 =====
   const [dailyAvgResults, setDailyAvgResults] = useState<Record<string, number>>({});
@@ -430,6 +434,7 @@ export default function App() {
         onCancelDrawing={handleCancelDrawing}
         onUndoVertex={handleUndoVertex}
         onRemoveTerrain={handleRemoveTerrain}
+        onOpenDrawing={() => setShowDrawing(true)}
       />
       <MapView
         panelGeoJSON={panelGeoJSON}
@@ -451,6 +456,9 @@ export default function App() {
         terrainDrawingMode={terrainDrawingMode}
         drawingVertices={drawingVertices}
       />
+      {showDrawing && activeInst && (
+        <DrawingView installation={activeInst} onClose={() => setShowDrawing(false)} />
+      )}
     </div>
   );
 }

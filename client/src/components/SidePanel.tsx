@@ -63,6 +63,7 @@ interface Props {
   onCancelDrawing: () => void;
   onUndoVertex: () => void;
   onRemoveTerrain: (id: string) => void;
+  onOpenDrawing: () => void;
 }
 
 function NumInput({ label, value, onChange, min, max, step, unit }: {
@@ -111,6 +112,7 @@ export default function SidePanel({
   dailyAvgResults, isCalcingDaily, onCalcDailyAvg,
   terrainElevations, pendingTerrainHeight, terrainDrawingMode, drawingVertexCount,
   onTerrainHeightChange, onStartDrawing, onCompleteDrawing, onCancelDrawing, onUndoVertex, onRemoveTerrain,
+  onOpenDrawing,
 }: Props) {
   const [addressInput, setAddressInput] = useState('');
   const [geocoding, setGeocoding] = useState(false);
@@ -430,7 +432,8 @@ export default function SidePanel({
 
             <section className="section">
               <h2>💾 出力</h2>
-              <button className="btn-primary btn-block" onClick={onExportJSON}>JSON ダウンロード</button>
+              <button className="btn-drawing btn-block" onClick={onOpenDrawing}>📐 図面・3Dビューを開く</button>
+              <button className="btn-primary btn-block" style={{ marginTop: 6 }} onClick={onExportJSON}>JSON ダウンロード</button>
               <p className="note">※ 初期検討用の簡易シミュレーターです。構造計算・発電量計算の代替にはなりません。</p>
             </section>
           </>
