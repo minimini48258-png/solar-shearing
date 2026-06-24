@@ -184,9 +184,21 @@ function buildThreeScene(installation: FieldInstallation) {
 }
 
 function addPergolaStructure(
-  scene: THREE.Scene, cfg: PanelConfig, rack: PergolaRackSpec, panels: PanelPolygon[]
+  scene: THREE.Scene, cfg: PanelConfig, rack: PergolaRackSpec, _panels: PanelPolygon[]
 ) {
-  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight } = cfg;
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+
+  // Apply same rackRotation as generatePanels (clockwise in ENU horizontal plane)
+  const rotRad = rackRotation * Math.PI / 180;
+  const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
+  const rotENU = (ex: number, en: number): [number, number] => [
+    ex * cosr + en * sinr,
+    -ex * sinr + en * cosr,
+  ];
+  const pt = (ex: number, en: number, ez: number) => {
+    const [rx, ry] = rotENU(ex, en);
+    return enuToThree(rx, ry, ez);
+  };
 
   // Materials — colors matching さざ波式 image
   const postMat  = new THREE.MeshLambertMaterial({ color: 0x2b7dc7 }); // 柱: blue
@@ -199,70 +211,53 @@ function addPergolaStructure(
   const bp    = rack.basePlateWidthMm / 1000;
   const bpt   = rack.basePlateThicknessMm / 1000;
   const ysH   = rack.yokosanH / 1000;
-  const ysW   = rack.yokosanW / 1000;
   const tsH   = rack.tatesanH / 1000;
   const tsW   = rack.tatesanW / 1000;
   const brR   = rack.braceDiameterMm / 1000 / 2;
 
-  // Post positions: at each EW column boundary × NS front/back
-  const xPositions: number[] = [];
-  for (let i = 0; i <= colsEW; i++) {
-    xPositions.push((i - colsEW / 2) * ewSpacing);
-  }
-  const yFront = -(rowsNS - 1) / 2 * nsSpacing - nsSpacing / 2;
-  const yBack  =  (rowsNS - 1) / 2 * nsSpacing + nsSpacing / 2;
-  const yPositions = [yFront, yBack];
+  // Grid lines: (colsEW+1) in EW direction, (rowsNS+1) in NS direction
+  const xGrid: number[] = [];
+  for (let i = 0; i <= colsEW; i++) xGrid.push((i - colsEW / 2) * ewSpacing);
+  const yGrid: number[] = [];
+  for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
 
-  // ===== 柱 (Posts) =====
-  const postGeo  = new THREE.CylinderGeometry(postR, postR * 1.05, mountHeight, 12);
+  // ===== 柱 (Posts) — at every grid intersection =====
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
-  for (const px of xPositions) {
-    for (const py of yPositions) {
-      const post = new THREE.Mesh(postGeo, postMat);
-      post.position.set(px, mountHeight / 2, -py);
-      scene.add(post);
+  for (const gx of xGrid) {
+    for (const gy of yGrid) {
+      addCylinder(scene, pt(gx, gy, 0), pt(gx, gy, mountHeight), postR, postMat);
       const plate = new THREE.Mesh(plateGeo, plateMat);
-      plate.position.set(px, bpt / 2, -py);
+      const [rx, ry] = rotENU(gx, gy);
+      plate.position.copy(enuToThree(rx, ry, bpt / 2));
+      plate.rotation.y = -rotRad;
       scene.add(plate);
     }
   }
 
-  // ===== ヨコサン (Cross beams running EW, at each NS row boundary) =====
-  const ewSpan = colsEW * ewSpacing;
-  const yokosanNSPositions: number[] = [yFront];
-  for (let row = 0; row < rowsNS - 1; row++) {
-    yokosanNSPositions.push((row + 0.5 - (rowsNS - 1) / 2) * nsSpacing);
-  }
-  yokosanNSPositions.push(yBack);
-  const ykGeo = new THREE.BoxGeometry(ewSpan + ewSpacing, ysH, ysW);
-  for (const py of yokosanNSPositions) {
-    const beam = new THREE.Mesh(ykGeo, ykMat);
-    beam.position.set(0, mountHeight + ysH / 2, -py);
-    scene.add(beam);
+  // ===== ヨコサン (EW cross beams at every NS grid line) =====
+  for (const gy of yGrid) {
+    const p1 = pt(xGrid[0], gy, mountHeight + ysH / 2);
+    const p2 = pt(xGrid[xGrid.length - 1], gy, mountHeight + ysH / 2);
+    addCylinder(scene, p1, p2, ysH / 2, ykMat);
   }
 
-  // ===== タテサン (Longitudinal purlins running NS, panels rest on these) =====
-  const nsSpan = (rowsNS - 1) * nsSpacing + nsSpacing;
-  const tCount = Math.max(1, colsEW * rack.tatesanPerSpan);
-  const tsGeo  = new THREE.BoxGeometry(tsW, tsH, nsSpan + nsSpacing * 0.2);
+  // ===== タテサン (NS purlins spanning full depth, evenly distributed in EW) =====
+  const ewTotal = xGrid[xGrid.length - 1] - xGrid[0];
+  const tCount  = Math.max(1, colsEW * rack.tatesanPerSpan);
   for (let i = 0; i < tCount; i++) {
-    const px = (i + 0.5) / tCount * ewSpan - ewSpan / 2;
-    const ts = new THREE.Mesh(tsGeo, tsMat);
-    ts.position.set(px, mountHeight + ysH + tsH / 2, 0);
-    scene.add(ts);
+    const gx = xGrid[0] + (i + 0.5) / tCount * ewTotal;
+    const p1 = pt(gx, yGrid[0], mountHeight + ysH + tsH / 2);
+    const p2 = pt(gx, yGrid[yGrid.length - 1], mountHeight + ysH + tsH / 2);
+    addCylinder(scene, p1, p2, tsW / 2, tsMat);
   }
 
-  // ===== 筋交い (X-bracing between posts in each EW bay, on front and back) =====
+  // ===== 筋交い (X-bracing in each EW bay, at outer NS lines only) =====
   if (rack.hasBrace && brR > 0.005) {
-    for (let i = 0; i < xPositions.length - 1; i++) {
-      for (const py of yPositions) {
-        const x0 = xPositions[i], x1 = xPositions[i + 1];
-        const p1 = new THREE.Vector3(x0, 0.05, -py);
-        const p2 = new THREE.Vector3(x1, mountHeight, -py);
-        const p3 = new THREE.Vector3(x0, mountHeight, -py);
-        const p4 = new THREE.Vector3(x1, 0.05, -py);
-        addCylinder(scene, p1, p2, brR, brMat);
-        addCylinder(scene, p3, p4, brR, brMat);
+    const braceNS = [yGrid[0], yGrid[yGrid.length - 1]];
+    for (let i = 0; i < xGrid.length - 1; i++) {
+      for (const gy of braceNS) {
+        addCylinder(scene, pt(xGrid[i],     gy, 0.05),       pt(xGrid[i + 1], gy, mountHeight), brR, brMat);
+        addCylinder(scene, pt(xGrid[i],     gy, mountHeight), pt(xGrid[i + 1], gy, 0.05),       brR, brMat);
       }
     }
   }
@@ -644,19 +639,32 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
 
 // ===== Elevation View =====
 
+type ElevDir = 'S' | 'N' | 'E' | 'W';
+const ELEV_DIRS: { key: ElevDir; label: string; desc: string }[] = [
+  { key: 'S', label: '南立面図', desc: '南から（北向き）' },
+  { key: 'N', label: '北立面図', desc: '北から（南向き）' },
+  { key: 'E', label: '東立面図', desc: '東から（西向き）' },
+  { key: 'W', label: '西立面図', desc: '西から（東向き）' },
+];
+
+function elevToSVG(dir: ElevDir): (x: number, y: number, z: number) => [number, number] {
+  switch (dir) {
+    case 'S': return (x, _y, z) => [x,  -z]; // 南から北を見る: 右=東
+    case 'N': return (x, _y, z) => [-x, -z]; // 北から南を見る: 右=西
+    case 'E': return (_x, y, z) => [y,  -z]; // 東から西を見る: 右=北
+    case 'W': return (_x, y, z) => [-y, -z]; // 西から東を見る: 右=南
+  }
+}
+
 function ElevationView({ installation }: { installation: FieldInstallation }) {
+  const [dir, setDir] = useState<ElevDir>('S');
   const { config, installationType } = installation;
-  const az = getAzimuth(installation);
-  const fwdE = Math.sin(az * Math.PI / 180);
-  const fwdN = Math.cos(az * Math.PI / 180);
 
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
     : generateSlopePanels(config as SlopeConfig);
 
-  const toSVG = (x: number, y: number, z: number): [number, number] => [
-    -fwdN * x + fwdE * y, -z,
-  ];
+  const toSVG = elevToSVG(dir);
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = -Infinity;
   for (const p of panels) {
@@ -676,13 +684,24 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
     : (config as SlopeConfig).baseMountHeight;
   const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.65)' : 'rgba(213,94,10,0.65)';
   const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
+  const dirInfo = ELEV_DIRS.find(d => d.key === dir)!;
 
   return (
     <div className="svg-drawing-wrap">
       <div className="drawing-info-bar">
-        <span className="dv-label">正面図（{azLabel(az)}面から）</span>
-        <span>{installation.name}</span>
-        <span>設置高さ {mountH.toFixed(1)} m ／ 方位 {az}°</span>
+        <span className="dv-label">{dirInfo.label}</span>
+        <span>{dirInfo.desc}</span>
+        <span>設置高さ {mountH.toFixed(1)} m</span>
+        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+          {ELEV_DIRS.map(d => (
+            <button
+              key={d.key}
+              className={`btn-draw-action${dir === d.key ? ' active-dir' : ''}`}
+              style={dir === d.key ? { background: 'rgba(255,255,255,0.38)', fontWeight: 700 } : {}}
+              onClick={() => setDir(d.key)}
+            >{d.key}面</button>
+          ))}
+        </div>
       </div>
       <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
         <SvgDefs />
@@ -1329,7 +1348,7 @@ export default function DrawingView({ installations, activeId, onInstallationCha
   const tabs: [DrawingTab, string][] = [
     ['3d', '🏗 3Dビュー'],
     ['plan', '🗺 平面図'],
-    ['elevation', '🏢 正面図'],
+    ['elevation', '🏢 立面図'],
     ['section', '✂ 断面図'],
   ];
 
