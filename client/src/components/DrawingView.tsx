@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { FieldInstallation, PanelConfig, SlopeConfig, AnyConfig, PanelPolygon } from '../types';
+import {
+  FieldInstallation, PanelConfig, SlopeConfig, AnyConfig, PanelPolygon, PanelSpec,
+  PergolaRackSpec, SlopeRackSpec, PANEL_PRESETS,
+} from '../types';
 import { generatePanels } from '../lib/panelGeometry';
 import { generateSlopePanels } from '../lib/slopePanelGeometry';
 import './DrawingView.css';
@@ -15,19 +18,35 @@ interface Props {
   onClose: () => void;
 }
 
+// ===== Default rack specs =====
+
+const DEF_PERGOLA_RACK: PergolaRackSpec = {
+  postDiameterMm: 114.3, postThicknessMm: 4.5, postMaterial: 'STK400 亜鉛メッキ',
+  yokosanH: 100, yokosanW: 50, yokosanT: 2.3,
+  tatesanH: 60, tatesanW: 30, tatesanT: 2.3, tatesanPerSpan: 2,
+  hasBrace: true, braceDiameterMm: 42.7, braceThicknessMm: 2.3,
+  basePlateWidthMm: 250, basePlateThicknessMm: 12,
+  foundationDepthM: 1.5, foundationType: 'baseplate',
+};
+
+const DEF_SLOPE_RACK: SlopeRackSpec = {
+  postDiameterMm: 89.1, postThicknessMm: 3.5, postMaterial: 'STK400 亜鉛メッキ',
+  postHeightMm: 400,
+  chordH: 80, chordW: 60, chordT: 2.3,
+  vertRailH: 60, vertRailW: 30, vertRailT: 2.3, vertRailPerPanel: 2,
+  horizRailH: 60, horizRailW: 30, horizRailT: 2.3,
+  hasBrace: true,
+  foundationType: 'pile', foundationDepthM: 1.5, pileDiameterMm: 114.3,
+};
+
 // ===== Coordinate helpers =====
 
-/**
- * Rotate ENU (x=East, y=North) by (azimuth-180°) CCW so the facing direction
- * maps to SVG "south" (down). This aligns panel rows horizontally in plan view.
- */
 function rotatePlan(x: number, y: number, azDeg: number): [number, number] {
   const θ = (azDeg - 180) * Math.PI / 180;
   const c = Math.cos(θ), s = Math.sin(θ);
   return [x * c - y * s, x * s + y * c];
 }
 
-/** ENU (East=x, North=y, Up=z) → Three.js (x=East, y=Up, z=-North) */
 function enuToThree(x: number, y: number, z: number): THREE.Vector3 {
   return new THREE.Vector3(x, z, -y);
 }
@@ -50,15 +69,38 @@ function getAzimuth(inst: FieldInstallation): number {
     : (inst.config as SlopeConfig).facingAzimuth;
 }
 
+function getEffectiveRack(inst: FieldInstallation): PergolaRackSpec | SlopeRackSpec {
+  return inst.rackSpec ?? (inst.installationType === 'pergola' ? DEF_PERGOLA_RACK : DEF_SLOPE_RACK);
+}
+
+function getEffectivePanelSpec(inst: FieldInstallation): PanelSpec {
+  return inst.panelSpec ?? PANEL_PRESETS[0];
+}
+
+// ===== Three.js helpers =====
+
+function addCylinder(
+  scene: THREE.Scene, p1: THREE.Vector3, p2: THREE.Vector3, radius: number, mat: THREE.Material
+) {
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const len = dir.length();
+  if (len < 0.001) return;
+  const geo = new THREE.CylinderGeometry(radius, radius, len, 10, 1);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(p1).add(p2).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  scene.add(mesh);
+}
+
 // ===== 3D Scene =====
 
 function buildThreeScene(installation: FieldInstallation) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xd0e6f5);
-  scene.fog = new THREE.FogExp2(0xd0e6f5, 0.011);
+  scene.fog = new THREE.FogExp2(0xd0e6f5, 0.01);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const sun = new THREE.DirectionalLight(0xfff4d6, 1.0);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.DirectionalLight(0xfff4d6, 1.1);
   sun.position.set(-8, 18, 6);
   scene.add(sun);
   const fill = new THREE.DirectionalLight(0xc8dcff, 0.3);
@@ -83,7 +125,6 @@ function buildThreeScene(installation: FieldInstallation) {
     transparent: true, opacity: 0.88, side: THREE.DoubleSide,
   });
   const edgeMat = new THREE.LineBasicMaterial({ color: isP ? 0x1e3a8a : 0x9a3412 });
-  const frameMat = new THREE.MeshLambertMaterial({ color: 0x7a7068 });
 
   const panels: PanelPolygon[] = isP
     ? generatePanels(installation.config as PanelConfig)
@@ -106,9 +147,10 @@ function buildThreeScene(installation: FieldInstallation) {
     scene.add(new THREE.Line(eg, edgeMat));
   }
 
+  const rack = getEffectiveRack(installation);
   isP
-    ? addPergolaStructure(scene, installation.config as PanelConfig, frameMat, panels)
-    : addSlopeStructure(scene, installation.config as SlopeConfig, frameMat, panels);
+    ? addPergolaStructure(scene, installation.config as PanelConfig, rack as PergolaRackSpec, panels)
+    : addSlopeStructure(scene, installation.config as SlopeConfig, rack as SlopeRackSpec, panels);
 
   // North arrow
   const arrowMat = new THREE.MeshBasicMaterial({ color: 0xff2020 });
@@ -116,7 +158,7 @@ function buildThreeScene(installation: FieldInstallation) {
   body.position.set(-14, 0.45, 13.6);
   scene.add(body);
   const head = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.45, 8), arrowMat);
-  head.position.set(-14, 0.9, 13.0); // -z = north in Three.js
+  head.position.set(-14, 0.9, 13.0);
   scene.add(head);
 
   const bb = computeBBox(panels.flatMap(p => p.corners));
@@ -142,77 +184,204 @@ function buildThreeScene(installation: FieldInstallation) {
 }
 
 function addPergolaStructure(
-  scene: THREE.Scene, cfg: PanelConfig, mat: THREE.Material, panels: PanelPolygon[]
+  scene: THREE.Scene, cfg: PanelConfig, rack: PergolaRackSpec, panels: PanelPolygon[]
 ) {
-  const bb = computeBBox(panels.flatMap(p => p.corners));
-  const xMin = bb.xMin - 0.05, xMax = bb.xMax + 0.05;
-  const yMin = bb.yMin - 0.05, yMax = bb.yMax + 0.05;
-  const h = cfg.mountHeight;
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight } = cfg;
 
-  const postGeo = new THREE.CylinderGeometry(0.07, 0.08, h, 8);
-  for (const [px, py] of [[xMin, yMin], [xMax, yMin], [xMin, yMax], [xMax, yMax]] as [number, number][]) {
-    const m = new THREE.Mesh(postGeo, mat);
-    m.position.set(px, h / 2, -py);
-    scene.add(m);
+  // Materials — colors matching さざ波式 image
+  const postMat  = new THREE.MeshLambertMaterial({ color: 0x2b7dc7 }); // 柱: blue
+  const ykMat    = new THREE.MeshLambertMaterial({ color: 0xcc44aa }); // ヨコサン: pink
+  const tsMat    = new THREE.MeshLambertMaterial({ color: 0x22aa33 }); // タテサン: green
+  const brMat    = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 筋交い: brown
+  const plateMat = new THREE.MeshLambertMaterial({ color: 0xee6622 }); // ベースプレート: orange
+
+  const postR = rack.postDiameterMm / 1000 / 2;
+  const bp    = rack.basePlateWidthMm / 1000;
+  const bpt   = rack.basePlateThicknessMm / 1000;
+  const ysH   = rack.yokosanH / 1000;
+  const ysW   = rack.yokosanW / 1000;
+  const tsH   = rack.tatesanH / 1000;
+  const tsW   = rack.tatesanW / 1000;
+  const brR   = rack.braceDiameterMm / 1000 / 2;
+
+  // Post positions: at each EW column boundary × NS front/back
+  const xPositions: number[] = [];
+  for (let i = 0; i <= colsEW; i++) {
+    xPositions.push((i - colsEW / 2) * ewSpacing);
+  }
+  const yFront = -(rowsNS - 1) / 2 * nsSpacing - nsSpacing / 2;
+  const yBack  =  (rowsNS - 1) / 2 * nsSpacing + nsSpacing / 2;
+  const yPositions = [yFront, yBack];
+
+  // ===== 柱 (Posts) =====
+  const postGeo  = new THREE.CylinderGeometry(postR, postR * 1.05, mountHeight, 12);
+  const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
+  for (const px of xPositions) {
+    for (const py of yPositions) {
+      const post = new THREE.Mesh(postGeo, postMat);
+      post.position.set(px, mountHeight / 2, -py);
+      scene.add(post);
+      const plate = new THREE.Mesh(plateGeo, plateMat);
+      plate.position.set(px, bpt / 2, -py);
+      scene.add(plate);
+    }
   }
 
-  // EW beams
-  const ewGeo = new THREE.BoxGeometry(xMax - xMin + 0.12, 0.09, 0.07);
-  for (const py of [yMin, yMax]) {
-    const b = new THREE.Mesh(ewGeo, mat);
-    b.position.set((xMin + xMax) / 2, h + 0.045, -py);
-    scene.add(b);
+  // ===== ヨコサン (Cross beams running EW, at each NS row boundary) =====
+  const ewSpan = colsEW * ewSpacing;
+  const yokosanNSPositions: number[] = [yFront];
+  for (let row = 0; row < rowsNS - 1; row++) {
+    yokosanNSPositions.push((row + 0.5 - (rowsNS - 1) / 2) * nsSpacing);
   }
-  // NS beams
-  const nsGeo = new THREE.BoxGeometry(0.07, 0.09, yMax - yMin + 0.12);
-  for (const px of [xMin, xMax]) {
-    const b = new THREE.Mesh(nsGeo, mat);
-    b.position.set(px, h + 0.045, -(yMin + yMax) / 2);
-    scene.add(b);
+  yokosanNSPositions.push(yBack);
+  const ykGeo = new THREE.BoxGeometry(ewSpan + ewSpacing, ysH, ysW);
+  for (const py of yokosanNSPositions) {
+    const beam = new THREE.Mesh(ykGeo, ykMat);
+    beam.position.set(0, mountHeight + ysH / 2, -py);
+    scene.add(beam);
   }
-  // Intermediate NS purlins
-  const purlinGeo = new THREE.BoxGeometry(xMax - xMin + 0.04, 0.05, 0.04);
-  for (let row = 0; row < cfg.rowsNS; row++) {
-    const py = (row - (cfg.rowsNS - 1) / 2) * cfg.nsSpacing;
-    const p = new THREE.Mesh(purlinGeo, mat);
-    p.position.set((xMin + xMax) / 2, h + 0.02, -py);
-    scene.add(p);
+
+  // ===== タテサン (Longitudinal purlins running NS, panels rest on these) =====
+  const nsSpan = (rowsNS - 1) * nsSpacing + nsSpacing;
+  const tCount = Math.max(1, colsEW * rack.tatesanPerSpan);
+  const tsGeo  = new THREE.BoxGeometry(tsW, tsH, nsSpan + nsSpacing * 0.2);
+  for (let i = 0; i < tCount; i++) {
+    const px = (i + 0.5) / tCount * ewSpan - ewSpan / 2;
+    const ts = new THREE.Mesh(tsGeo, tsMat);
+    ts.position.set(px, mountHeight + ysH + tsH / 2, 0);
+    scene.add(ts);
+  }
+
+  // ===== 筋交い (X-bracing between posts in each EW bay, on front and back) =====
+  if (rack.hasBrace && brR > 0.005) {
+    for (let i = 0; i < xPositions.length - 1; i++) {
+      for (const py of yPositions) {
+        const x0 = xPositions[i], x1 = xPositions[i + 1];
+        const p1 = new THREE.Vector3(x0, 0.05, -py);
+        const p2 = new THREE.Vector3(x1, mountHeight, -py);
+        const p3 = new THREE.Vector3(x0, mountHeight, -py);
+        const p4 = new THREE.Vector3(x1, 0.05, -py);
+        addCylinder(scene, p1, p2, brR, brMat);
+        addCylinder(scene, p3, p4, brR, brMat);
+      }
+    }
   }
 }
 
 function addSlopeStructure(
-  scene: THREE.Scene, cfg: SlopeConfig, frameMat: THREE.Material, panels: PanelPolygon[]
+  scene: THREE.Scene, cfg: SlopeConfig, rack: SlopeRackSpec, panels: PanelPolygon[]
 ) {
   const { slopeAngle, facingAzimuth, rowsDown, downSpacing, colsAcross, acrossSpacing, panelWidth, baseMountHeight } = cfg;
   const slopeRad = slopeAngle * Math.PI / 180;
   const fRad = facingAzimuth * Math.PI / 180;
   const fwdE = Math.sin(fRad), fwdN = Math.cos(fRad);
 
-  const slopeW = (colsAcross - 1) * acrossSpacing + panelWidth + 2;
+  // Materials — brown/gray for slope rack
+  const postMat   = new THREE.MeshLambertMaterial({ color: 0x5577aa }); // 支柱: steel blue
+  const chordMat  = new THREE.MeshLambertMaterial({ color: 0x8888aa }); // 弦材: grey-blue
+  const vertMat   = new THREE.MeshLambertMaterial({ color: 0x44aa44 }); // 縦桟: green
+  const horizMat  = new THREE.MeshLambertMaterial({ color: 0xaa8833 }); // 横桟: gold
+  const braceMat  = new THREE.MeshLambertMaterial({ color: 0x888888 }); // 筋交い
+
+  const postR   = rack.postDiameterMm / 1000 / 2;
+  const postH   = rack.postHeightMm / 1000;
+  const chordH  = rack.chordH / 1000;
+  const chordW  = rack.chordW / 1000;
+  const vRailH  = rack.vertRailH / 1000;
+  const vRailW  = rack.vertRailW / 1000;
+  const hRailH  = rack.horizRailH / 1000;
+  const hRailW  = rack.horizRailW / 1000;
+
+  // Slope surface mesh (earth-colored background)
+  const slopeW   = (colsAcross - 1) * acrossSpacing + panelWidth + 2;
   const slopeLen = rowsDown * downSpacing + 2;
   const slopeMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(slopeW, slopeLen),
     new THREE.MeshLambertMaterial({ color: 0xb8956a, side: THREE.DoubleSide })
   );
   const midR = (rowsDown - 1) / 2 * downSpacing;
-  const scx = midR * Math.cos(slopeRad) * (-fwdE);
-  const scy = midR * Math.cos(slopeRad) * (-fwdN);
-  const scz = baseMountHeight + midR * Math.sin(slopeRad);
-  slopeMesh.position.set(scx, scz, -scy);
+  slopeMesh.position.set(
+    midR * Math.cos(slopeRad) * (-fwdE),
+    baseMountHeight + midR * Math.sin(slopeRad),
+    -(midR * Math.cos(slopeRad) * (-fwdN))
+  );
   slopeMesh.rotation.order = 'YXZ';
   slopeMesh.rotation.y = -(facingAzimuth - 180) * Math.PI / 180;
   slopeMesh.rotation.x = -(Math.PI / 2 - slopeRad);
   scene.add(slopeMesh);
 
-  const postGeo = new THREE.CylinderGeometry(0.03, 0.035, baseMountHeight + 0.18, 6);
-  for (const panel of panels) {
-    const cs = panel.corners;
-    const px = cs.reduce((s, c) => s + c.x, 0) / 4;
-    const py = cs.reduce((s, c) => s + c.y, 0) / 4;
-    const pz = cs.reduce((s, c) => s + c.z, 0) / 4;
-    const pm = new THREE.Mesh(postGeo, frameMat);
-    pm.position.set(px, pz - (baseMountHeight + 0.18) / 2, -py);
-    scene.add(pm);
+  // Helper: ENU position on slope at given col (across) and row (down) indices
+  const slopePoint = (col: number, row: number, heightAboveSlope = 0) => {
+    const acrossOffset = (col - (colsAcross - 1) / 2) * acrossSpacing;
+    // Right direction on slope (perpendicular to facing, horizontal)
+    const rightE = Math.cos(fRad), rightN = -Math.sin(fRad);
+    // Down direction on slope surface
+    const downSlopeFwdE = -fwdE, downSlopeFwdN = -fwdN;
+    const downD = row * downSpacing;
+    const px = acrossOffset * rightE + downD * Math.cos(slopeRad) * downSlopeFwdE;
+    const py = acrossOffset * rightN + downD * Math.cos(slopeRad) * downSlopeFwdN;
+    const pz = baseMountHeight + heightAboveSlope + downD * Math.sin(slopeRad);
+    return enuToThree(px, py, pz);
+  };
+
+  // Normal direction to slope surface (pointing away from slope)
+  const slopeNormalE = fwdE * Math.sin(slopeRad);
+  const slopeNormalN = fwdN * Math.sin(slopeRad);
+  const slopeNormalZ = Math.cos(slopeRad);
+
+  // ===== 支柱 (Posts perpendicular to slope, at each grid point) =====
+  for (let col = 0; col < colsAcross; col++) {
+    for (let row = 0; row <= rowsDown; row++) {
+      const base = slopePoint(col, row * (downSpacing / rowsDown) * rowsDown / (rowsDown + 1), 0);
+      // Simplified: post at each column, every row
+      if (row % 1 !== 0) continue;
+      const rowR = row * downSpacing / Math.max(rowsDown, 1);
+      const base2 = slopePoint(col, rowR < downSpacing * rowsDown ? rowR : downSpacing * (rowsDown - 1), 0);
+      const top = new THREE.Vector3(
+        base2.x + slopeNormalE * postH,
+        base2.y + slopeNormalZ * postH,
+        base2.z - slopeNormalN * postH
+      );
+      addCylinder(scene, base2, top, postR, postMat);
+    }
+  }
+
+  // ===== 縦桟 (Vertical rails running down slope, panels mount on these) =====
+  const vCount = colsAcross * rack.vertRailPerPanel;
+  for (let i = 0; i < vCount; i++) {
+    const colFrac = (i + 0.5) / vCount * colsAcross;
+    const topPt   = slopePoint(colFrac - (colsAcross) / 2, 0, postH + vRailH / 2);
+    const botPt   = slopePoint(colFrac - (colsAcross) / 2, (rowsDown - 1) * downSpacing, postH + vRailH / 2);
+    // Draw as box (simplified, using cylinder for now)
+    addCylinder(scene, topPt, botPt, vRailW / 2, vertMat);
+  }
+
+  // ===== 横桟 (Horizontal rails across slope, every few rows) =====
+  for (let row = 0; row <= rowsDown; row++) {
+    const y = row === rowsDown ? (rowsDown - 1) * downSpacing : row * downSpacing;
+    const left  = slopePoint(0, y, postH + hRailH / 2);
+    const right = slopePoint(colsAcross - 1, y, postH + hRailH / 2);
+    addCylinder(scene, left, right, hRailW / 2, horizMat);
+  }
+
+  // ===== 弦材 (Top and bottom chord beams) =====
+  for (let col = 0; col <= colsAcross; col++) {
+    const acx = (col - (colsAcross) / 2) * acrossSpacing;
+    const topPt = slopePoint(acx / acrossSpacing + (colsAcross - 1) / 2, 0, postH + chordH / 2);
+    const botPt = slopePoint(acx / acrossSpacing + (colsAcross - 1) / 2, (rowsDown - 1) * downSpacing, postH + chordH / 2);
+    addCylinder(scene, topPt, botPt, chordW / 2, chordMat);
+  }
+
+  // ===== 筋交い (X-brace on one side of each column bay) =====
+  if (rack.hasBrace) {
+    for (let col = 0; col < colsAcross - 1; col++) {
+      const tl = slopePoint(col, 0, postH * 0.9);
+      const br = slopePoint(col + 1, (rowsDown - 1) * downSpacing, 0.05);
+      const bl = slopePoint(col, (rowsDown - 1) * downSpacing, 0.05);
+      const tr = slopePoint(col + 1, 0, postH * 0.9);
+      addCylinder(scene, tl, br, 0.015, braceMat);
+      addCylinder(scene, bl, tr, 0.015, braceMat);
+    }
   }
 }
 
@@ -276,10 +445,6 @@ function SvgDefs() {
   );
 }
 
-/**
- * Engineering dimension line between two SVG points.
- * offset: perpendicular distance for the dimension line.
- */
 function DimLine({
   x1, y1, x2, y2, offset, label, fs = 0.36, color = '#555',
 }: {
@@ -309,7 +474,6 @@ function DimLine({
   );
 }
 
-/** Small inner dimension annotation (placed inside a panel or between panels). */
 function InnerDim({ x1, y1, x2, y2, label, offset = 0.25, fs = 0.3 }: {
   x1: number; y1: number; x2: number; y2: number;
   label: string; offset?: number; fs?: number;
@@ -350,13 +514,13 @@ function ScaleBar({ x, y, length = 5 }: { x: number; y: number; length?: number 
     <g stroke="#555" strokeWidth="0.06" fill="none">
       <rect x={x} y={y - 0.12} width={length} height={0.24} fill="#555" />
       <rect x={x + length / 2} y={y - 0.12} width={length / 2} height={0.24} fill="#fff" />
-      <text x={x} y={y + 0.48} textAnchor="start" fontSize="0.32" fill="#555" stroke="none">{`0`}</text>
+      <text x={x} y={y + 0.48} textAnchor="start" fontSize="0.32" fill="#555" stroke="none">0</text>
       <text x={x + length} y={y + 0.48} textAnchor="end" fontSize="0.32" fill="#555" stroke="none">{`${length}m`}</text>
     </g>
   );
 }
 
-// ===== Plan View (平面図) =====
+// ===== Plan View =====
 
 function PlanView({ installation }: { installation: FieldInstallation }) {
   const { config, installationType } = installation;
@@ -365,7 +529,6 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
     ? generatePanels(config as PanelConfig)
     : generateSlopePanels(config as SlopeConfig);
 
-  // Rotate all panel corner XY coordinates by (az-180°) so facing dir = "south" (down)
   const rot = (x: number, y: number) => rotatePlan(x, y, az);
 
   let rxMin = Infinity, rxMax = -Infinity, ryMin = Infinity, ryMax = -Infinity;
@@ -381,14 +544,10 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
   const vbX = rxMin - mg, vbY = -(ryMax + mg);
   const vbW = rxMax - rxMin + 2 * mg, vbH = ryMax - ryMin + 2 * mg;
 
-  // SVG coordinate conversion: flip Y so rotated-north is up
   const sv = (rx: number, ry: number): [number, number] => [rx, -ry];
-
-  // Panel colors
   const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.62)' : 'rgba(213,94,10,0.62)';
   const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
 
-  // Panel center helper
   const center = (p: PanelPolygon) => {
     const [rx, ry] = rot(
       p.corners.reduce((s, c) => s + c.x, 0) / 4,
@@ -403,11 +562,9 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
   const rowsCount = installationType === 'pergola'
     ? (config as PanelConfig).rowsNS
     : (config as SlopeConfig).rowsDown;
-
   const totalPanels = colsCount * rowsCount;
   const area = totalPanels * config.panelWidth * config.panelDepth;
 
-  // Compute spacing dimension points (between adjacent panel centers)
   const ewSpacing = installationType === 'pergola'
     ? (config as PanelConfig).ewSpacing
     : (config as SlopeConfig).acrossSpacing;
@@ -415,36 +572,14 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
     ? (config as PanelConfig).nsSpacing
     : (config as SlopeConfig).downSpacing;
 
-  // Panel 0 (col=0, row=0) and panel 1 (col=1, row=0) for EW spacing
   const c0 = colsCount > 1 ? center(panels[0]) : null;
   const c1 = colsCount > 1 ? center(panels[1]) : null;
-  // Panel 0 (col=0, row=0) and panel at (col=0, row=1) for NS spacing
   const r0 = rowsCount > 1 ? center(panels[0]) : null;
   const r1 = rowsCount > 1 ? center(panels[colsCount]) : null;
 
-  // First panel corners for panel-size dimension
   const fc = panels[0].corners.map(c => { const [rx, ry] = rot(c.x, c.y); return sv(rx, ry); });
-  // Width edge: fc[3] → fc[2] (or fc[0] → fc[1] depending on orientation)
-  // After rotation, corners are:
-  //   fc[0]: upper end, rgt side (will be to the right in plan for az=180°)
-  //   fc[1]: upper end, opposite rgt (left)
-  //   fc[2]: lower end, left
-  //   fc[3]: lower end, right
-  // For az=180°: upper = north (top of SVG), lower = south (bottom)
-  //   rgt = west (left in SVG), opposite rgt = east (right)
-  // After rotation: panel's "rgt" direction aligns with -X in SVG (left)
-
-  // The four sides of the first panel in the rotated plan:
-  // Top edge: fc[0]–fc[1] (if fc[0] and fc[1] share the same y ≈ -ryMax)
-  // Bottom edge: fc[3]–fc[2]
-  // Right edge: fc[1]–fc[2]
-  // Left edge: fc[0]–fc[3]
-
-  // Width of panel = horizontal distance between fc[0] and fc[1] (top edge)
   const panelWidthLabel = `W=${config.panelWidth.toFixed(2)}m`;
   const depthLabel = `D=${config.panelDepth.toFixed(2)}m`;
-
-  // The North arrow rotation: after plan rotation by (az-180°), north is at (180-az)° in SVG
   const northArrowRot = 180 - az;
 
   return (
@@ -452,29 +587,20 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
       <div className="drawing-info-bar">
         <span className="dv-label">平面図</span>
         <span>方位: {az}° ({azLabel(az)}) ／ {totalPanels}枚 ／ {area.toFixed(1)} m²</span>
-        <span className="dv-note">※ 図面はパネル向き({azLabel(az)})を下方向に揃えて表示</span>
+        <span className="dv-note">※ パネル向き({azLabel(az)})を下方向に表示</span>
       </div>
       <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
         <SvgDefs />
-
-        {/* 1m grid */}
         {Array.from({ length: Math.ceil(vbW) + 2 }, (_, i) => Math.floor(vbX) + i).map(gx => (
           <line key={`gx${gx}`} x1={gx} y1={vbY} x2={gx} y2={vbY + vbH} stroke="#e8e8e8" strokeWidth="0.02" />
         ))}
         {Array.from({ length: Math.ceil(vbH) + 2 }, (_, i) => Math.floor(vbY) + i).map(gy => (
           <line key={`gy${gy}`} x1={vbX} y1={gy} x2={vbX + vbW} y2={gy} stroke="#e8e8e8" strokeWidth="0.02" />
         ))}
-
-        {/* Support structure footprint (pergola posts) */}
-        {installationType === 'pergola' && (() => {
-          const pw = config.panelWidth * 0.1;
-          return (
-            <rect x={rxMin} y={-ryMax} width={rxMax - rxMin} height={ryMax - ryMin}
-              fill="none" stroke="#c4a882" strokeWidth="0.06" strokeDasharray="0.2,0.15" />
-          );
-        })()}
-
-        {/* Panels */}
+        {installationType === 'pergola' && (
+          <rect x={rxMin} y={-ryMax} width={rxMax - rxMin} height={ryMax - ryMin}
+            fill="none" stroke="#c4a882" strokeWidth="0.06" strokeDasharray="0.2,0.15" />
+        )}
         {panels.map(panel => {
           const pts = panel.corners.map(c => {
             const [rx, ry] = rot(c.x, c.y);
@@ -485,79 +611,38 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
               fill={pFill} stroke={pStroke} strokeWidth="0.04" />
           );
         })}
-
-        {/* Panel row/col index labels */}
-        {installationType === 'pergola' && colsCount > 1 && rowsCount > 1 && (
-          <>
-            {Array.from({ length: colsCount }, (_, col) => {
-              const [cx, cy] = center(panels[col]);
-              return <text key={`col${col}`} x={cx} y={cy} textAnchor="middle" fontSize="0.28" fill="rgba(255,255,255,0.85)">{`C${col + 1}`}</text>;
-            })}
-          </>
-        )}
-
-        {/* Panel size dimensions (on first panel) */}
-        <InnerDim
-          x1={fc[0][0]} y1={fc[0][1]}
-          x2={fc[1][0]} y2={fc[1][1]}
-          label={panelWidthLabel} offset={0.2} fs={0.3}
-        />
-        <InnerDim
-          x1={fc[1][0]} y1={fc[1][1]}
-          x2={fc[2][0]} y2={fc[2][1]}
-          label={depthLabel} offset={0.2} fs={0.3}
-        />
-
-        {/* EW spacing (between col 0 and col 1 centers) */}
+        <InnerDim x1={fc[0][0]} y1={fc[0][1]} x2={fc[1][0]} y2={fc[1][1]}
+          label={panelWidthLabel} offset={0.2} fs={0.3} />
+        <InnerDim x1={fc[1][0]} y1={fc[1][1]} x2={fc[2][0]} y2={fc[2][1]}
+          label={depthLabel} offset={0.2} fs={0.3} />
         {c0 && c1 && (
-          <DimLine
-            x1={c0[0]} y1={ryMax + mg * 0.6 < 0 ? -(ryMax + mg * 0.6) : c0[1]}
-            x2={c1[0]} y2={ryMax + mg * 0.6 < 0 ? -(ryMax + mg * 0.6) : c1[1]}
+          <DimLine x1={c0[0]} y1={c0[1]} x2={c1[0]} y2={c1[1]}
             offset={-(ryMax - ryMin) / 2 - 1.6}
-            label={`@${ewSpacing}m`} color="#2563eb"
-          />
+            label={`@${ewSpacing}m`} color="#2563eb" />
         )}
-
-        {/* NS spacing (between row 0 and row 1 centers) */}
         {r0 && r1 && (
-          <DimLine
-            x1={rxMax + mg * 0.55} y1={r0[1]}
-            x2={rxMax + mg * 0.55} y2={r1[1]}
+          <DimLine x1={rxMax + mg * 0.55} y1={r0[1]} x2={rxMax + mg * 0.55} y2={r1[1]}
             offset={(rxMax - rxMin) / 2 + 1.6}
-            label={installationType === 'pergola' ? `@${nsSpacing}m` : `@${nsSpacing}m(斜)` }
-            color="#2563eb"
-          />
+            label={installationType === 'pergola' ? `@${nsSpacing}m` : `@${nsSpacing}m(斜)`}
+            color="#2563eb" />
         )}
-
-        {/* Total width */}
-        <DimLine
-          x1={rxMin} y1={-(ryMin)} x2={rxMax} y2={-(ryMin)}
-          offset={-1.8} label={`${(rxMax - rxMin).toFixed(2)} m`}
-        />
-        {/* Total depth */}
-        <DimLine
-          x1={rxMax} y1={-(ryMin)} x2={rxMax} y2={-(ryMax)}
-          offset={1.8} label={`${(ryMax - ryMin).toFixed(2)} m`}
-        />
-
-        {/* Facing direction arrow */}
+        <DimLine x1={rxMin} y1={-(ryMin)} x2={rxMax} y2={-(ryMin)}
+          offset={-1.8} label={`${(rxMax - rxMin).toFixed(2)} m`} />
+        <DimLine x1={rxMax} y1={-(ryMin)} x2={rxMax} y2={-(ryMax)}
+          offset={1.8} label={`${(ryMax - ryMin).toFixed(2)} m`} />
         <g opacity="0.6">
           <line x1={0} y1={-(ryMax) + 0.4} x2={0} y2={-(ryMax) + 1.6}
             stroke="#d97706" strokeWidth="0.12" markerEnd="url(#da)" />
           <text x={0} y={-(ryMax) + 2.2} textAnchor="middle" fontSize="0.32" fill="#d97706">↓ {azLabel(az)}</text>
         </g>
-
-        {/* North arrow */}
         <NorthArrow cx={vbX + vbW - 1.2} cy={vbY + 1.2} r={0.88} rotateDeg={northArrowRot} />
-
-        {/* Scale bar */}
         <ScaleBar x={vbX + 0.5} y={vbY + vbH - 0.8} length={5} />
       </svg>
     </div>
   );
 }
 
-// ===== Elevation View (正面図) — projection onto plane ⊥ to facing direction =====
+// ===== Elevation View =====
 
 function ElevationView({ installation }: { installation: FieldInstallation }) {
   const { config, installationType } = installation;
@@ -569,13 +654,8 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
     ? generatePanels(config as PanelConfig)
     : generateSlopePanels(config as SlopeConfig);
 
-  // Project onto plane ⊥ to fwd:
-  // svgX = viewer's right = (-fwdN, fwdE) dotted with (localX, localY)
-  //      = -fwdN * x + fwdE * y
-  // svgY = -localZ (up = top of SVG)
   const toSVG = (x: number, y: number, z: number): [number, number] => [
-    -fwdN * x + fwdE * y,
-    -z,
+    -fwdN * x + fwdE * y, -z,
   ];
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = -Infinity;
@@ -586,17 +666,14 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
       svgYMin = Math.min(svgYMin, sy); svgYMax = Math.max(svgYMax, sy);
     }
   }
-  // Include ground (z=0)
   svgYMax = Math.max(svgYMax, 0);
 
   const mg = 2.5;
   const vbX = svgXMin - mg, vbY = svgYMin - mg;
   const vbW = svgXMax - svgXMin + 2 * mg, vbH = svgYMax - svgYMin + 2 * mg;
-
   const mountH = installationType === 'pergola'
     ? (config as PanelConfig).mountHeight
     : (config as SlopeConfig).baseMountHeight;
-
   const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.65)' : 'rgba(213,94,10,0.65)';
   const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
 
@@ -609,65 +686,44 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
       </div>
       <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
         <SvgDefs />
-
-        {/* Ground */}
         <rect x={vbX} y={0} width={vbW} height={mg} fill="rgba(104,148,106,0.2)" />
         <line x1={vbX} y1={0} x2={vbX + vbW} y2={0} stroke="#68946a" strokeWidth="0.08" />
-
-        {/* Pergola support: posts + beams in elevation */}
         {installationType === 'pergola' && (() => {
           const h = (config as PanelConfig).mountHeight;
           return (
             <>
-              <line x1={svgXMin} y1={0} x2={svgXMin} y2={-h} stroke="#7a7068" strokeWidth="0.1" />
-              <line x1={svgXMax} y1={0} x2={svgXMax} y2={-h} stroke="#7a7068" strokeWidth="0.1" />
-              <line x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#7a7068" strokeWidth="0.07" />
-              {/* Intermediate purlins */}
-              {Array.from({ length: (config as PanelConfig).rowsNS }, (_, row) => {
-                const py = (row - ((config as PanelConfig).rowsNS - 1) / 2) * (config as PanelConfig).nsSpacing;
-                const [sx] = toSVG(0, py, 0);
-                return <line key={row} x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#9a9080" strokeWidth="0.04" />;
-              })}
+              <line x1={svgXMin} y1={0} x2={svgXMin} y2={-h} stroke="#2b7dc7" strokeWidth="0.1" />
+              <line x1={svgXMax} y1={0} x2={svgXMax} y2={-h} stroke="#2b7dc7" strokeWidth="0.1" />
+              <line x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#cc44aa" strokeWidth="0.07" />
               <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-h} offset={-1.4}
                 label={`${h.toFixed(2)} m`} color="#c53030" />
             </>
           );
         })()}
-
-        {/* Slope support: base height dimension */}
         {installationType === 'slope' && mountH > 0 && (
           <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
             label={`基礎 ${mountH.toFixed(2)} m`} color="#c53030" />
         )}
-
-        {/* Panels */}
         {panels.map(panel => (
           <polygon key={panel.panelIndex}
             points={panel.corners.map(c => { const [sx, sy] = toSVG(c.x, c.y, c.z); return `${sx},${sy}`; }).join(' ')}
             fill={pFill} stroke={pStroke} strokeWidth="0.045" />
         ))}
-
-        {/* Width dimension */}
-        <DimLine
-          x1={svgXMin} y1={svgYMin - 0.3} x2={svgXMax} y2={svgYMin - 0.3}
-          offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`}
-        />
-        {/* Height dimension */}
-        <DimLine
-          x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
-          offset={1.3} label={`${(-svgYMin).toFixed(2)} m`}
-        />
-        {/* Tilt angle annotation for elevation */}
-        {installationType === 'pergola' && (() => {
-          const tilt = (config as PanelConfig).tiltAngle;
-          return <text x={svgXMin + 0.2} y={svgYMin + 0.6} fontSize="0.38" fill="#e07010">{tilt}° 傾斜</text>;
-        })()}
+        <DimLine x1={svgXMin} y1={svgYMin - 0.3} x2={svgXMax} y2={svgYMin - 0.3}
+          offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`} />
+        <DimLine x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
+          offset={1.3} label={`${(-svgYMin).toFixed(2)} m`} />
+        {installationType === 'pergola' && (
+          <text x={svgXMin + 0.2} y={svgYMin + 0.6} fontSize="0.38" fill="#e07010">
+            {(config as PanelConfig).tiltAngle}° 傾斜
+          </text>
+        )}
       </svg>
     </div>
   );
 }
 
-// ===== Section View (断面図) =====
+// ===== Section View =====
 
 function SectionView({ installation }: { installation: FieldInstallation }) {
   const { config, installationType } = installation;
@@ -697,12 +753,8 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
     : (config as SlopeConfig).downSpacing;
   const downSpacing = installationType === 'slope' ? (config as SlopeConfig).downSpacing : 0;
 
-  // Section projection: along facing direction (fwd) and up
-  // svgX = fwdE * x + fwdN * y (depth along facing direction, positive = "south")
-  // svgY = -z (up)
   const toSVG = (x: number, y: number, z: number): [number, number] => [
-    fwdE * x + fwdN * y,
-    -z,
+    fwdE * x + fwdN * y, -z,
   ];
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = 0;
@@ -717,17 +769,15 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
   const mg = 3;
   const vbX = svgXMin - mg, vbY = svgYMin - mg;
   const vbW = svgXMax - svgXMin + 2 * mg, vbH = svgYMax - svgYMin + 2 * mg;
-
   const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.72)' : 'rgba(213,94,10,0.72)';
   const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
 
-  // Tilt angle arc at lowest corner of first section panel
   let arcEl: React.ReactElement | null = null;
   if (sectionPanels.length > 0) {
     const lc = sectionPanels[0].corners.reduce((a, b) => (a.z < b.z ? a : b));
     const hc = sectionPanels[0].corners.reduce((a, b) => (a.z > b.z ? a : b));
     const [lcx, lcy] = toSVG(lc.x, lc.y, lc.z);
-    const [hcx, hcy] = toSVG(hc.x, hc.y, hc.z);
+    const [hcx] = toSVG(hc.x, hc.y, hc.z);
     const arcR = Math.min(1.2, Math.abs(hcx - lcx) * 0.5);
     if (arcR > 0.1) {
       const angRad = effTilt * Math.PI / 180;
@@ -752,32 +802,15 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
       </div>
       <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
         <SvgDefs />
-
-        {/* Ground / Slope surface */}
         {installationType === 'slope' ? (() => {
           const slopeRad = slopeAngle * Math.PI / 180;
           const xRange = svgXMax - svgXMin;
           return (
             <>
-              <path
-                d={`M ${svgXMin - 0.5} 0 L ${svgXMax + 0.5} ${-(xRange + 1) * Math.tan(slopeRad)} L ${svgXMax + 0.5} ${mg * 0.7} L ${svgXMin - 0.5} ${mg * 0.7} Z`}
+              <path d={`M ${svgXMin - 0.5} 0 L ${svgXMax + 0.5} ${-(xRange + 1) * Math.tan(slopeRad)} L ${svgXMax + 0.5} ${mg * 0.7} L ${svgXMin - 0.5} ${mg * 0.7} Z`}
                 fill="rgba(184,149,106,0.25)" />
-              <line x1={svgXMin - 0.5} y1={0}
-                x2={svgXMax + 0.5} y2={-(xRange + 1) * Math.tan(slopeRad)}
+              <line x1={svgXMin - 0.5} y1={0} x2={svgXMax + 0.5} y2={-(xRange + 1) * Math.tan(slopeRad)}
                 stroke="#b8956a" strokeWidth="0.12" />
-              {/* Slope angle arc */}
-              {(() => {
-                const ar = 1.8;
-                return (
-                  <g>
-                    <line x1={svgXMin - 0.3} y1={0} x2={svgXMin - 0.3 + ar * 1.5} y2={0}
-                      stroke="#888" strokeWidth="0.05" strokeDasharray="0.15,0.1" />
-                    <path d={`M ${svgXMin - 0.3 + ar} 0 A ${ar} ${ar} 0 0 0 ${svgXMin - 0.3 + ar * Math.cos(slopeRad)} ${-ar * Math.sin(slopeRad)}`}
-                      stroke="#888" strokeWidth="0.07" fill="none" />
-                    <text x={svgXMin - 0.3 + ar + 0.1} y={-ar * 0.38} fontSize="0.38" fill="#666">{slopeAngle}°</text>
-                  </g>
-                );
-              })()}
             </>
           );
         })() : (
@@ -786,75 +819,58 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
             <line x1={vbX} y1={0} x2={vbX + vbW} y2={0} stroke="#68946a" strokeWidth="0.08" />
           </>
         )}
-
-        {/* Pergola posts in section */}
         {installationType === 'pergola' && (() => {
           const h = (config as PanelConfig).mountHeight;
           const [x0] = toSVG(0, (panels[0].corners[3].y + panels[0].corners[2].y) / 2, 0);
           const [x1] = toSVG(0, (panels[0].corners[0].y + panels[0].corners[1].y) / 2, 0);
           return (
             <>
-              <line x1={x0} y1={0} x2={x0} y2={-h} stroke="#7a7068" strokeWidth="0.09" />
-              <line x1={x1} y1={0} x2={x1} y2={-h} stroke="#7a7068" strokeWidth="0.09" />
-              <line x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#7a7068" strokeWidth="0.07" />
+              <line x1={x0} y1={0} x2={x0} y2={-h} stroke="#2b7dc7" strokeWidth="0.09" />
+              <line x1={x1} y1={0} x2={x1} y2={-h} stroke="#2b7dc7" strokeWidth="0.09" />
+              <line x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#cc44aa" strokeWidth="0.07" />
               <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-h} offset={-1.4}
                 label={`${h.toFixed(2)} m`} color="#c53030" />
             </>
           );
         })()}
-
-        {/* Slope base mount dimension */}
         {installationType === 'slope' && mountH > 0 && (
           <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
             label={`基礎 ${mountH.toFixed(2)} m`} color="#c53030" />
         )}
-
-        {/* Section panels */}
         {sectionPanels.map(panel => (
           <polygon key={panel.panelIndex}
             points={panel.corners.map(c => { const [sx, sy] = toSVG(c.x, c.y, c.z); return `${sx},${sy}`; }).join(' ')}
             fill={pFill} stroke={pStroke} strokeWidth="0.055" />
         ))}
-
-        {/* Panel spacing dimension (NS/down direction) */}
         {sectionPanels.length > 1 && (() => {
           const [c0x, c0y] = toSVG(
-            sectionPanels[0].corners.reduce((s,c) => s+c.x,0)/4,
-            sectionPanels[0].corners.reduce((s,c) => s+c.y,0)/4,
-            sectionPanels[0].corners.reduce((s,c) => s+c.z,0)/4,
+            sectionPanels[0].corners.reduce((s, c) => s + c.x, 0) / 4,
+            sectionPanels[0].corners.reduce((s, c) => s + c.y, 0) / 4,
+            sectionPanels[0].corners.reduce((s, c) => s + c.z, 0) / 4,
           );
           const [c1x, c1y] = toSVG(
-            sectionPanels[1].corners.reduce((s,c) => s+c.x,0)/4,
-            sectionPanels[1].corners.reduce((s,c) => s+c.y,0)/4,
-            sectionPanels[1].corners.reduce((s,c) => s+c.z,0)/4,
+            sectionPanels[1].corners.reduce((s, c) => s + c.x, 0) / 4,
+            sectionPanels[1].corners.reduce((s, c) => s + c.y, 0) / 4,
+            sectionPanels[1].corners.reduce((s, c) => s + c.z, 0) / 4,
           );
           const spacingLabel = installationType === 'pergola'
-            ? `@${nsSpacing}m`
-            : `@${downSpacing}m(斜)`;
+            ? `@${nsSpacing}m` : `@${downSpacing}m(斜)`;
           return (
             <DimLine x1={c0x} y1={c0y} x2={c1x} y2={c1y}
               offset={-1.2} label={spacingLabel} color="#2563eb" />
           );
         })()}
-
-        {/* Tilt arc */}
         {arcEl}
-
-        {/* Depth and height dimensions */}
-        <DimLine
-          x1={svgXMin} y1={svgYMin - 0.3} x2={svgXMax} y2={svgYMin - 0.3}
-          offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`}
-        />
-        <DimLine
-          x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
-          offset={1.3} label={`${(-svgYMin).toFixed(2)} m`}
-        />
+        <DimLine x1={svgXMin} y1={svgYMin - 0.3} x2={svgXMax} y2={svgYMin - 0.3}
+          offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`} />
+        <DimLine x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
+          offset={1.3} label={`${(-svgYMin).toFixed(2)} m`} />
       </svg>
     </div>
   );
 }
 
-// ===== Edit Panel =====
+// ===== Edit Panel components =====
 
 function DVNumInput({
   label, value, onChange, unit, min, max, step = 0.1,
@@ -876,6 +892,257 @@ function DVNumInput({
   );
 }
 
+function DVSelect({ label, value, options, onChange }: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="dv-field">
+      <label className="dv-field-label">{label}</label>
+      <div className="dv-field-input">
+        <select value={value} onChange={e => onChange(e.target.value)} className="dv-select">
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function DVToggle({ label, value, onChange }: {
+  label: string; value: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="dv-field">
+      <label className="dv-field-label">{label}</label>
+      <div className="dv-field-input">
+        <button
+          className={`dv-toggle${value ? ' on' : ''}`}
+          onClick={() => onChange(!value)}
+        >{value ? 'あり' : 'なし'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ===== Panel Section =====
+
+function PanelSection({
+  installation, onChange,
+}: {
+  installation: FieldInstallation;
+  onChange: (patch: Partial<FieldInstallation>) => void;
+}) {
+  const spec = getEffectivePanelSpec(installation);
+  const config = installation.config;
+
+  const selectedKey = installation.panelSpec
+    ? (PANEL_PRESETS.find(p => p.model === installation.panelSpec?.model)?.key ?? 'custom')
+    : 'LP510W';
+
+  const handlePresetChange = (key: string) => {
+    const preset = PANEL_PRESETS.find(p => p.key === key) ?? PANEL_PRESETS[1];
+    const { key: _k, ...spec } = preset;
+    const wM = spec.widthMm / 1000;
+    const dM = spec.lengthMm / 1000;
+    onChange({
+      panelSpec: spec,
+      config: { ...config, panelWidth: wM, panelDepth: dM } as AnyConfig,
+    });
+  };
+
+  const updSpec = (patch: Partial<PanelSpec>) => {
+    const newSpec = { ...spec, ...patch };
+    const patch2: Partial<FieldInstallation> = { panelSpec: newSpec };
+    if ('widthMm' in patch) patch2.config = { ...config, panelWidth: newSpec.widthMm / 1000 } as AnyConfig;
+    if ('lengthMm' in patch) patch2.config = { ...config, panelDepth: newSpec.lengthMm / 1000 } as AnyConfig;
+    onChange(patch2);
+  };
+
+  const totalPanels = installation.installationType === 'pergola'
+    ? (config as PanelConfig).colsEW * (config as PanelConfig).rowsNS
+    : (config as SlopeConfig).colsAcross * (config as SlopeConfig).rowsDown;
+  const totalW = totalPanels * spec.wattage;
+  const totalWBi = spec.isBifacial ? totalW * (1 + spec.bifacialGainPct / 100) : totalW;
+  const totalKg = totalPanels * spec.weightKg;
+
+  return (
+    <>
+      <div className="dv-section-title">📋 パネル仕様</div>
+      <DVSelect
+        label="パネル選択"
+        value={selectedKey}
+        onChange={handlePresetChange}
+        options={PANEL_PRESETS.map(p => ({ value: p.key, label: p.key === 'custom' ? 'カスタム' : `${p.maker} ${p.model}` }))}
+      />
+      <div className="dv-panel-spec-box">
+        <div className="dv-spec-row"><span className="dv-spec-key">メーカー</span><span>{spec.maker || '—'}</span></div>
+        <div className="dv-spec-row"><span className="dv-spec-key">型番</span><span style={{fontSize:10}}>{spec.model}</span></div>
+      </div>
+      {selectedKey === 'custom' ? (
+        <>
+          <DVNumInput label="幅 W" value={spec.widthMm} onChange={v => updSpec({ widthMm: v })} unit="mm" min={500} max={2500} step={1} />
+          <DVNumInput label="長辺 L" value={spec.lengthMm} onChange={v => updSpec({ lengthMm: v })} unit="mm" min={500} max={3000} step={1} />
+          <DVNumInput label="厚さ" value={spec.thicknessMm} onChange={v => updSpec({ thicknessMm: v })} unit="mm" min={20} max={50} step={1} />
+          <DVNumInput label="重量" value={spec.weightKg} onChange={v => updSpec({ weightKg: v })} unit="kg" min={5} max={60} step={0.1} />
+          <DVNumInput label="出力" value={spec.wattage} onChange={v => updSpec({ wattage: v })} unit="W" min={100} max={800} step={5} />
+          <DVNumInput label="Voc" value={spec.voc} onChange={v => updSpec({ voc: v })} unit="V" min={20} max={80} step={0.1} />
+          <DVNumInput label="Isc" value={spec.isc} onChange={v => updSpec({ isc: v })} unit="A" min={5} max={25} step={0.1} />
+        </>
+      ) : (
+        <>
+          <div className="dv-field">
+            <label className="dv-field-label">サイズ</label>
+            <div className="dv-field-input" style={{fontSize:11}}>{spec.widthMm} × {spec.lengthMm} × {spec.thicknessMm} mm</div>
+          </div>
+          <div className="dv-field">
+            <label className="dv-field-label">重量 / 出力</label>
+            <div className="dv-field-input" style={{fontSize:11}}>{spec.weightKg} kg ／ {spec.wattage} W</div>
+          </div>
+          <div className="dv-field">
+            <label className="dv-field-label">両面発電</label>
+            <div className="dv-field-input" style={{fontSize:11}}>
+              {spec.isBifacial ? `両面 +${spec.bifacialGainPct}%` : '片面'}
+            </div>
+          </div>
+          <div className="dv-field">
+            <label className="dv-field-label">Voc / Isc</label>
+            <div className="dv-field-input" style={{fontSize:11}}>{spec.voc} V ／ {spec.isc} A</div>
+          </div>
+        </>
+      )}
+      <div className="dv-calc-box">
+        <div>枚数: <strong>{totalPanels}枚</strong> ／ 総重量: <strong>{totalKg.toFixed(0)} kg</strong></div>
+        <div>表面出力: <strong>{(totalW / 1000).toFixed(2)} kW</strong>
+          {spec.isBifacial && <> ／ 両面込: <strong>{(totalWBi / 1000).toFixed(2)} kW</strong></>}
+        </div>
+        <div>パネル面積: <strong>{(totalPanels * spec.widthMm / 1000 * spec.lengthMm / 1000).toFixed(1)} m²</strong></div>
+      </div>
+    </>
+  );
+}
+
+// ===== Pergola Rack Section =====
+
+function PergolaRackSection({
+  rackSpec, onChange,
+}: {
+  rackSpec: PergolaRackSpec;
+  onChange: (r: PergolaRackSpec) => void;
+}) {
+  const upd = (patch: Partial<PergolaRackSpec>) => onChange({ ...rackSpec, ...patch });
+  return (
+    <>
+      <div className="dv-section-title">🔵 柱 (Posts)</div>
+      <DVNumInput label="外径" value={rackSpec.postDiameterMm} onChange={v => upd({ postDiameterMm: v })} unit="mm" min={48} max={216} step={0.1} />
+      <DVNumInput label="肉厚" value={rackSpec.postThicknessMm} onChange={v => upd({ postThicknessMm: v })} unit="mm" min={2} max={12} step={0.1} />
+      <DVSelect label="材質" value={rackSpec.postMaterial}
+        options={[
+          { value: 'STK400 亜鉛メッキ', label: 'STK400 亜鉛メッキ' },
+          { value: 'STK490 亜鉛メッキ', label: 'STK490 亜鉛メッキ' },
+          { value: 'SUS304', label: 'SUS304 ステンレス' },
+          { value: 'アルミ', label: 'アルミ合金' },
+        ]}
+        onChange={v => upd({ postMaterial: v })}
+      />
+      <DVNumInput label="ベースPL幅" value={rackSpec.basePlateWidthMm} onChange={v => upd({ basePlateWidthMm: v })} unit="mm" min={100} max={600} step={10} />
+      <DVNumInput label="ベースPL厚" value={rackSpec.basePlateThicknessMm} onChange={v => upd({ basePlateThicknessMm: v })} unit="mm" min={6} max={32} step={1} />
+
+      <div className="dv-section-title">🟣 ヨコサン (Cross Beams)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.yokosanH} onChange={v => upd({ yokosanH: v })} unit="mm" min={40} max={300} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.yokosanW} onChange={v => upd({ yokosanW: v })} unit="mm" min={30} max={200} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.yokosanT} onChange={v => upd({ yokosanT: v })} unit="mm" min={1.5} max={12} step={0.1} />
+
+      <div className="dv-section-title">🟢 タテサン (Purlins)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.tatesanH} onChange={v => upd({ tatesanH: v })} unit="mm" min={30} max={200} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.tatesanW} onChange={v => upd({ tatesanW: v })} unit="mm" min={20} max={150} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.tatesanT} onChange={v => upd({ tatesanT: v })} unit="mm" min={1.5} max={6} step={0.1} />
+      <DVNumInput label="1スパン本数" value={rackSpec.tatesanPerSpan} onChange={v => upd({ tatesanPerSpan: Math.max(1, Math.round(v)) })} unit="本" min={1} max={6} step={1} />
+
+      <div className="dv-section-title">🟤 筋交い (Bracing)</div>
+      <DVToggle label="筋交い" value={rackSpec.hasBrace} onChange={v => upd({ hasBrace: v })} />
+      {rackSpec.hasBrace && (
+        <>
+          <DVNumInput label="径" value={rackSpec.braceDiameterMm} onChange={v => upd({ braceDiameterMm: v })} unit="mm" min={20} max={114} step={0.1} />
+          <DVNumInput label="肉厚" value={rackSpec.braceThicknessMm} onChange={v => upd({ braceThicknessMm: v })} unit="mm" min={1.5} max={6} step={0.1} />
+        </>
+      )}
+
+      <div className="dv-section-title">⛏ 基礎 (Foundation)</div>
+      <DVSelect label="基礎タイプ" value={rackSpec.foundationType}
+        options={[
+          { value: 'baseplate', label: 'ベースプレート' },
+          { value: 'direct', label: '直接基礎（根入れ）' },
+          { value: 'anchor', label: 'アンカーボルト' },
+        ]}
+        onChange={v => upd({ foundationType: v as PergolaRackSpec['foundationType'] })}
+      />
+      <DVNumInput label="基礎深さ" value={rackSpec.foundationDepthM} onChange={v => upd({ foundationDepthM: v })} unit="m" min={0.5} max={5} step={0.1} />
+    </>
+  );
+}
+
+// ===== Slope Rack Section =====
+
+function SlopeRackSection({
+  rackSpec, onChange,
+}: {
+  rackSpec: SlopeRackSpec;
+  onChange: (r: SlopeRackSpec) => void;
+}) {
+  const upd = (patch: Partial<SlopeRackSpec>) => onChange({ ...rackSpec, ...patch });
+  return (
+    <>
+      <div className="dv-section-title">🔵 支柱 (Posts)</div>
+      <DVNumInput label="外径" value={rackSpec.postDiameterMm} onChange={v => upd({ postDiameterMm: v })} unit="mm" min={42} max={165} step={0.1} />
+      <DVNumInput label="肉厚" value={rackSpec.postThicknessMm} onChange={v => upd({ postThicknessMm: v })} unit="mm" min={2} max={10} step={0.1} />
+      <DVNumInput label="法面突出高" value={rackSpec.postHeightMm} onChange={v => upd({ postHeightMm: v })} unit="mm" min={100} max={2000} step={50} />
+      <DVSelect label="材質" value={rackSpec.postMaterial}
+        options={[
+          { value: 'STK400 亜鉛メッキ', label: 'STK400 亜鉛メッキ' },
+          { value: 'STK490 亜鉛メッキ', label: 'STK490 亜鉛メッキ' },
+          { value: 'SUS304', label: 'SUS304 ステンレス' },
+        ]}
+        onChange={v => upd({ postMaterial: v })}
+      />
+
+      <div className="dv-section-title">🟣 上下弦材 (Chord)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.chordH} onChange={v => upd({ chordH: v })} unit="mm" min={30} max={200} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.chordW} onChange={v => upd({ chordW: v })} unit="mm" min={20} max={150} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.chordT} onChange={v => upd({ chordT: v })} unit="mm" min={1.5} max={8} step={0.1} />
+
+      <div className="dv-section-title">🟢 縦桟 (Vertical Rails)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.vertRailH} onChange={v => upd({ vertRailH: v })} unit="mm" min={30} max={150} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.vertRailW} onChange={v => upd({ vertRailW: v })} unit="mm" min={20} max={100} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.vertRailT} onChange={v => upd({ vertRailT: v })} unit="mm" min={1.5} max={6} step={0.1} />
+      <DVNumInput label="1枚あたり本数" value={rackSpec.vertRailPerPanel} onChange={v => upd({ vertRailPerPanel: Math.max(1, Math.round(v)) })} unit="本" min={1} max={5} step={1} />
+
+      <div className="dv-section-title">🟡 横桟 (Horizontal Rails)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.horizRailH} onChange={v => upd({ horizRailH: v })} unit="mm" min={30} max={150} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.horizRailW} onChange={v => upd({ horizRailW: v })} unit="mm" min={20} max={100} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.horizRailT} onChange={v => upd({ horizRailT: v })} unit="mm" min={1.5} max={6} step={0.1} />
+
+      <div className="dv-section-title">🟤 筋交い / 基礎</div>
+      <DVToggle label="筋交い" value={rackSpec.hasBrace} onChange={v => upd({ hasBrace: v })} />
+      <DVSelect label="基礎タイプ" value={rackSpec.foundationType}
+        options={[
+          { value: 'pile', label: '鋼管杭' },
+          { value: 'mass', label: '重力式コンクリート' },
+          { value: 'block', label: 'ブロック基礎' },
+        ]}
+        onChange={v => upd({ foundationType: v as SlopeRackSpec['foundationType'] })}
+      />
+      <DVNumInput label="基礎深さ" value={rackSpec.foundationDepthM} onChange={v => upd({ foundationDepthM: v })} unit="m" min={0.3} max={5} step={0.1} />
+      {rackSpec.foundationType === 'pile' && (
+        <DVNumInput label="杭径" value={rackSpec.pileDiameterMm} onChange={v => upd({ pileDiameterMm: v })} unit="mm" min={42} max={216} step={0.1} />
+      )}
+    </>
+  );
+}
+
+// ===== Main Edit Panel =====
+
 function EditPanel({
   installation, onChange,
 }: {
@@ -888,6 +1155,12 @@ function EditPanel({
     [config, onChange]
   );
 
+  const rackSpec = getEffectiveRack(installation);
+  const handleRackChange = useCallback(
+    (newRack: PergolaRackSpec | SlopeRackSpec) => onChange({ rackSpec: newRack }),
+    [onChange]
+  );
+
   return (
     <div className="dv-edit-panel">
       <div className="dv-edit-header">
@@ -897,9 +1170,13 @@ function EditPanel({
         <span className="dv-edit-inst-name">{installation.name}</span>
       </div>
 
+      {/* Panel spec */}
+      <PanelSection installation={installation} onChange={onChange} />
+
+      {/* Basic structural params */}
       {installationType === 'pergola' && (
         <>
-          <div className="dv-section-title">📐 架台設計</div>
+          <div className="dv-section-title">🏗 架台基本設計</div>
           <DVNumInput label="架台高さ" value={(config as PanelConfig).mountHeight} onChange={v => upd({ mountHeight: v })} unit="m" min={0.3} max={15} step={0.1} />
           <DVNumInput label="傾斜角" value={(config as PanelConfig).tiltAngle} onChange={v => upd({ tiltAngle: v })} unit="°" min={0} max={60} step={1} />
           <DVNumInput label="方位角" value={(config as PanelConfig).facingAzimuth} onChange={v => upd({ facingAzimuth: v })} unit="°" min={0} max={360} step={1} />
@@ -911,16 +1188,17 @@ function EditPanel({
           <DVNumInput label="EW間隔(C-C)" value={(config as PanelConfig).ewSpacing} onChange={v => upd({ ewSpacing: v })} unit="m" min={0.5} max={10} step={0.05} />
           <DVNumInput label="NS間隔(C-C)" value={(config as PanelConfig).nsSpacing} onChange={v => upd({ nsSpacing: v })} unit="m" min={0.5} max={15} step={0.05} />
 
-          <div className="dv-section-title">🔲 パネル寸法</div>
-          <DVNumInput label="幅 W" value={config.panelWidth} onChange={v => upd({ panelWidth: v })} unit="m" min={0.1} max={4} step={0.05} />
-          <DVNumInput label="奥行 D" value={config.panelDepth} onChange={v => upd({ panelDepth: v })} unit="m" min={0.1} max={6} step={0.05} />
-
           <div className="dv-calc-box">
             <div>EW架台幅: <strong>{((config as PanelConfig).colsEW * (config as PanelConfig).ewSpacing).toFixed(2)} m</strong></div>
             <div>NS架台奥: <strong>{((config as PanelConfig).rowsNS * (config as PanelConfig).nsSpacing).toFixed(2)} m</strong></div>
             <div>最高点: <strong>{((config as PanelConfig).mountHeight + config.panelDepth / 2 * Math.sin((config as PanelConfig).tiltAngle * Math.PI / 180)).toFixed(2)} m</strong></div>
             <div>パネル間隔: <strong>{((config as PanelConfig).ewSpacing - config.panelWidth).toFixed(2)} m</strong></div>
           </div>
+
+          <PergolaRackSection
+            rackSpec={rackSpec as PergolaRackSpec}
+            onChange={handleRackChange}
+          />
         </>
       )}
 
@@ -938,16 +1216,17 @@ function EditPanel({
           <DVNumInput label="横間隔(C-C)" value={(config as SlopeConfig).acrossSpacing} onChange={v => upd({ acrossSpacing: v })} unit="m" min={0.5} max={10} step={0.05} />
           <DVNumInput label="縦間隔(斜面)" value={(config as SlopeConfig).downSpacing} onChange={v => upd({ downSpacing: v })} unit="m" min={0.5} max={15} step={0.05} />
 
-          <div className="dv-section-title">🔲 パネル寸法</div>
-          <DVNumInput label="幅 W" value={config.panelWidth} onChange={v => upd({ panelWidth: v })} unit="m" min={0.1} max={4} step={0.05} />
-          <DVNumInput label="奥行 D" value={config.panelDepth} onChange={v => upd({ panelDepth: v })} unit="m" min={0.1} max={6} step={0.05} />
-
           <div className="dv-calc-box">
             <div>有効傾斜: <strong>{(config as SlopeConfig).slopeAngle + (config as SlopeConfig).additionalTilt}°</strong></div>
             <div>横幅: <strong>{((config as SlopeConfig).colsAcross * (config as SlopeConfig).acrossSpacing).toFixed(2)} m</strong></div>
             <div>法面高さ: <strong>{((config as SlopeConfig).rowsDown * (config as SlopeConfig).downSpacing * Math.sin((config as SlopeConfig).slopeAngle * Math.PI / 180)).toFixed(2)} m</strong></div>
             <div>水平投影: <strong>{((config as SlopeConfig).rowsDown * (config as SlopeConfig).downSpacing * Math.cos((config as SlopeConfig).slopeAngle * Math.PI / 180)).toFixed(2)} m</strong></div>
           </div>
+
+          <SlopeRackSection
+            rackSpec={rackSpec as SlopeRackSpec}
+            onChange={handleRackChange}
+          />
         </>
       )}
     </div>
@@ -958,6 +1237,8 @@ function EditPanel({
 
 function SpecTable({ installation }: { installation: FieldInstallation }) {
   const { config, installationType } = installation;
+  const spec = getEffectivePanelSpec(installation);
+  const rack = getEffectiveRack(installation);
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
     : generateSlopePanels(config as SlopeConfig);
@@ -965,47 +1246,58 @@ function SpecTable({ installation }: { installation: FieldInstallation }) {
     ? (config as PanelConfig).colsEW * (config as PanelConfig).rowsNS
     : (config as SlopeConfig).colsAcross * (config as SlopeConfig).rowsDown;
   const area = totalPanels * config.panelWidth * config.panelDepth;
-  const estKw = area * 220 / 1000;
+  const estKw = totalPanels * spec.wattage / 1000;
   const bb = computeBBox(panels.flatMap(p => p.corners));
 
   const rows: [string, string][] = installationType === 'pergola' ? [
-    ['設置タイプ', '藤棚型（パーゴラ）'],
-    ['パネル配置', `${(config as PanelConfig).colsEW}列 × ${(config as PanelConfig).rowsNS}行`],
+    ['パネル型番', spec.model],
+    ['パネルメーカー', spec.maker || '—'],
+    ['パネル寸法', `${spec.widthMm}×${spec.lengthMm}×${spec.thicknessMm} mm`],
+    ['パネル出力', `${spec.wattage} W${spec.isBifacial ? ` (両面+${spec.bifacialGainPct}%)` : ''}`],
     ['パネル枚数', `${totalPanels} 枚`],
-    ['パネル寸法', `${config.panelWidth} × ${config.panelDepth} m`],
     ['総パネル面積', `${area.toFixed(1)} m²`],
-    ['推定発電量', `${estKw.toFixed(1)} kW`],
+    ['推定出力', `${estKw.toFixed(2)} kW`],
     ['架台高さ', `${(config as PanelConfig).mountHeight} m`],
     ['傾斜角', `${(config as PanelConfig).tiltAngle}°`],
     ['方位角', `${(config as PanelConfig).facingAzimuth}°（${azLabel((config as PanelConfig).facingAzimuth)}）`],
     ['EW間隔(C-C)', `${(config as PanelConfig).ewSpacing} m`],
     ['NS間隔(C-C)', `${(config as PanelConfig).nsSpacing} m`],
-    ['パネル間隔(EW)', `${((config as PanelConfig).ewSpacing - config.panelWidth).toFixed(2)} m`],
     ['外形 幅×奥行', `${(bb.xMax - bb.xMin).toFixed(2)} × ${(bb.yMax - bb.yMin).toFixed(2)} m`],
     ['最高点', `${bb.zMax.toFixed(2)} m`],
+    ['---柱---', ''],
+    ['柱 外径×肉厚', `φ${(rack as PergolaRackSpec).postDiameterMm}×${(rack as PergolaRackSpec).postThicknessMm} mm`],
+    ['柱 材質', (rack as PergolaRackSpec).postMaterial],
+    ['ヨコサン', `${(rack as PergolaRackSpec).yokosanH}×${(rack as PergolaRackSpec).yokosanW} mm t=${(rack as PergolaRackSpec).yokosanT}`],
+    ['タテサン', `${(rack as PergolaRackSpec).tatesanH}×${(rack as PergolaRackSpec).tatesanW} mm (${(rack as PergolaRackSpec).tatesanPerSpan}本/スパン)`],
+    ['基礎深さ', `${(rack as PergolaRackSpec).foundationDepthM} m`],
   ] : [
-    ['設置タイプ', '法面型（野立て）'],
-    ['パネル配置', `${(config as SlopeConfig).colsAcross}列 × ${(config as SlopeConfig).rowsDown}段`],
+    ['パネル型番', spec.model],
+    ['パネルメーカー', spec.maker || '—'],
+    ['パネル寸法', `${spec.widthMm}×${spec.lengthMm}×${spec.thicknessMm} mm`],
+    ['パネル出力', `${spec.wattage} W${spec.isBifacial ? ` (両面+${spec.bifacialGainPct}%)` : ''}`],
     ['パネル枚数', `${totalPanels} 枚`],
-    ['パネル寸法', `${config.panelWidth} × ${config.panelDepth} m`],
     ['総パネル面積', `${area.toFixed(1)} m²`],
-    ['推定発電量', `${estKw.toFixed(1)} kW`],
+    ['推定出力', `${estKw.toFixed(2)} kW`],
     ['法面傾斜角', `${(config as SlopeConfig).slopeAngle}°`],
-    ['追加傾斜', `${(config as SlopeConfig).additionalTilt}°`],
     ['有効傾斜角', `${(config as SlopeConfig).slopeAngle + (config as SlopeConfig).additionalTilt}°`],
     ['方位角', `${(config as SlopeConfig).facingAzimuth}°（${azLabel((config as SlopeConfig).facingAzimuth)}）`],
-    ['横間隔(C-C)', `${(config as SlopeConfig).acrossSpacing} m`],
-    ['縦間隔(斜面)', `${(config as SlopeConfig).downSpacing} m`],
-    ['基礎高さ', `${(config as SlopeConfig).baseMountHeight} m`],
     ['外形 幅×法長', `${(bb.xMax - bb.xMin).toFixed(2)} × ${(bb.yMax - bb.yMin).toFixed(2)} m`],
     ['最高点', `${bb.zMax.toFixed(2)} m`],
+    ['---支柱---', ''],
+    ['支柱 外径×肉厚', `φ${(rack as SlopeRackSpec).postDiameterMm}×${(rack as SlopeRackSpec).postThicknessMm} mm`],
+    ['支柱 材質', (rack as SlopeRackSpec).postMaterial],
+    ['縦桟', `${(rack as SlopeRackSpec).vertRailH}×${(rack as SlopeRackSpec).vertRailW} mm (${(rack as SlopeRackSpec).vertRailPerPanel}本/枚)`],
+    ['基礎タイプ', (rack as SlopeRackSpec).foundationType === 'pile' ? `鋼管杭 φ${(rack as SlopeRackSpec).pileDiameterMm}` : (rack as SlopeRackSpec).foundationType],
+    ['基礎深さ', `${(rack as SlopeRackSpec).foundationDepthM} m`],
   ];
 
   return (
     <div className="spec-table-wrap">
       <table className="spec-table">
         <tbody>
-          {rows.map(([k, v]) => (
+          {rows.map(([k, v]) => k.startsWith('---') ? (
+            <tr key={k}><th colSpan={2} style={{ background: '#e8edf4', fontSize: 10, paddingTop: 6 }}>{k.replace(/---/g, '').trim()}</th></tr>
+          ) : (
             <tr key={k}><th>{k}</th><td>{v}</td></tr>
           ))}
         </tbody>
@@ -1044,12 +1336,10 @@ export default function DrawingView({ installations, activeId, onInstallationCha
   return (
     <div className="drawing-modal">
       <div className="drawing-modal-inner">
-        {/* Header */}
         <div className="drawing-modal-header">
           <div className="drawing-header-left">
             <span className="drawing-header-icon">📐</span>
             <span className="drawing-header-title">図面・3Dビュー</span>
-            {/* Installation switcher */}
             <select
               className="dv-inst-select"
               value={viewId}
@@ -1068,9 +1358,7 @@ export default function DrawingView({ installations, activeId, onInstallationCha
           </div>
         </div>
 
-        {/* Main layout: drawing area (left/center) + edit panel (right) */}
         <div className="drawing-main">
-          {/* Drawing area */}
           <div className="drawing-area">
             <div className="drawing-tab-bar">
               {tabs.map(([id, label]) => (
@@ -1079,7 +1367,6 @@ export default function DrawingView({ installations, activeId, onInstallationCha
                   onClick={() => setTab(id)}>{label}</button>
               ))}
             </div>
-
             <div className="drawing-tab-content">
               {tab === '3d' && (
                 <div className="drawing-3d-layout">
@@ -1092,8 +1379,6 @@ export default function DrawingView({ installations, activeId, onInstallationCha
               {tab === 'section' && <SectionView installation={installation} />}
             </div>
           </div>
-
-          {/* Right: parameter edit panel */}
           <EditPanel installation={installation} onChange={handleChange} />
         </div>
       </div>

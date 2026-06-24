@@ -49,6 +49,96 @@ export interface GroundSlope {
   facingAzimuth: number;  // 傾斜方位 (degrees from N, 180=南向き斜面)
 }
 
+// ===== パネル仕様 =====
+export interface PanelSpec {
+  model: string;
+  maker: string;
+  widthMm: number;        // 短辺 (横設置時=EW方向)
+  lengthMm: number;       // 長辺 (傾斜方向)
+  thicknessMm: number;
+  weightKg: number;
+  wattage: number;        // 表面Pmax (W)
+  isBifacial: boolean;
+  bifacialGainPct: number; // 裏面発電増加率 (%)
+  voc: number;
+  isc: number;
+  vmp: number;
+  imp: number;
+}
+
+export const PANEL_PRESETS: (PanelSpec & { key: string })[] = [
+  {
+    key: 'LP510W',
+    model: 'LP182*210-M-54-NB-510W',
+    maker: 'Leapton Energy',
+    widthMm: 1134, lengthMm: 1961, thicknessMm: 30,
+    weightKg: 26.6, wattage: 510, isBifacial: true, bifacialGainPct: 10,
+    voc: 40.57, isc: 16.01, vmp: 33.73, imp: 15.12,
+  },
+  {
+    key: 'custom',
+    model: 'カスタム', maker: '（カスタム入力）',
+    widthMm: 1000, lengthMm: 2000, thicknessMm: 35,
+    weightKg: 25.0, wattage: 400, isBifacial: false, bifacialGainPct: 0,
+    voc: 38.0, isc: 13.0, vmp: 32.0, imp: 12.5,
+  },
+];
+
+// ===== 架台仕様 - 藤棚型（さざ波式ソーラーシェアリング架台） =====
+export interface PergolaRackSpec {
+  // 柱 (Posts)
+  postDiameterMm: number;      // 外径 (e.g., 114.3)
+  postThicknessMm: number;     // 肉厚 (e.g., 4.5)
+  postMaterial: string;        // 材質 (e.g., 'STK400 亜鉛メッキ')
+  // ヨコサン (Cross beams, spanning EW between posts)
+  yokosanH: number;            // 断面高さ mm (e.g., 100)
+  yokosanW: number;            // 断面幅 mm (e.g., 50)
+  yokosanT: number;            // 肉厚 mm (e.g., 2.3)
+  // タテサン (Longitudinal purlins, spanning NS, panels mount on these)
+  tatesanH: number;            // 断面高さ mm (e.g., 60)
+  tatesanW: number;            // 断面幅 mm (e.g., 30)
+  tatesanT: number;            // 肉厚 mm (e.g., 2.3)
+  tatesanPerSpan: number;      // 1スパン(パネル1枚幅)あたりのタテサン本数 (e.g., 2)
+  // 筋交い (Diagonal bracing)
+  hasBrace: boolean;
+  braceDiameterMm: number;     // 径 mm (e.g., 42.7)
+  braceThicknessMm: number;    // 肉厚 mm (e.g., 2.3)
+  // ベースプレート (Base plates)
+  basePlateWidthMm: number;    // (e.g., 250)
+  basePlateThicknessMm: number;// (e.g., 12)
+  // 基礎
+  foundationDepthM: number;    // 根入れ深さ m (e.g., 1.5)
+  foundationType: 'direct' | 'baseplate' | 'anchor';
+}
+
+// ===== 架台仕様 - 法面型 =====
+export interface SlopeRackSpec {
+  // 支柱 (Posts perpendicular to slope)
+  postDiameterMm: number;
+  postThicknessMm: number;
+  postMaterial: string;
+  postHeightMm: number;        // 法面面からの突出高さ mm (e.g., 400)
+  // 上弦材 / 下弦材 (Top and bottom horizontal rails, running across slope = EW)
+  chordH: number;              // 断面高さ mm
+  chordW: number;              // 断面幅 mm
+  chordT: number;              // 肉厚 mm
+  // 縦桟 (Vertical rails along slope direction, panels mount on these)
+  vertRailH: number;
+  vertRailW: number;
+  vertRailT: number;
+  vertRailPerPanel: number;    // パネル1枚あたりの縦桟本数 (e.g., 2)
+  // 横桟 (Horizontal rails across slope, intermediate)
+  horizRailH: number;
+  horizRailW: number;
+  horizRailT: number;
+  // 筋交い
+  hasBrace: boolean;
+  // 基礎
+  foundationType: 'pile' | 'mass' | 'block';
+  foundationDepthM: number;
+  pileDiameterMm: number;      // 鋼管杭径 mm
+}
+
 // ===== 複数設置管理 =====
 export interface FieldInstallation {
   id: string;
@@ -57,6 +147,8 @@ export interface FieldInstallation {
   location: GeoPoint;
   config: AnyConfig;
   groundSlope?: GroundSlope; // 省略時は平地 (angle=0)
+  panelSpec?: PanelSpec;     // パネル仕様（省略時はデフォルト）
+  rackSpec?: PergolaRackSpec | SlopeRackSpec; // 架台仕様
 }
 
 // ===== 遮光率計算結果 =====
