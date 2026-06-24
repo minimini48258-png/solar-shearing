@@ -637,34 +637,127 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
   );
 }
 
-// ===== Elevation View =====
+// ===== Pergola Rack SVG (shared between elevation and section) =====
 
-type ElevDir = 'S' | 'N' | 'E' | 'W';
-const ELEV_DIRS: { key: ElevDir; label: string; desc: string }[] = [
-  { key: 'S', label: '南立面図', desc: '南から（北向き）' },
-  { key: 'N', label: '北立面図', desc: '北から（南向き）' },
-  { key: 'E', label: '東立面図', desc: '東から（西向き）' },
-  { key: 'W', label: '西立面図', desc: '西から（東向き）' },
-];
+function PergolaRackSVG({ cfg, rack, toSVG }: {
+  cfg: PanelConfig;
+  rack: PergolaRackSpec;
+  toSVG: (x: number, y: number, z: number) => [number, number];
+}) {
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const rotRad = rackRotation * Math.PI / 180;
+  const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
+  const sv = (ex: number, en: number, ez: number): [number, number] => {
+    return toSVG(ex * cosr + en * sinr, -ex * sinr + en * cosr, ez);
+  };
 
-function elevToSVG(dir: ElevDir): (x: number, y: number, z: number) => [number, number] {
-  switch (dir) {
-    case 'S': return (x, _y, z) => [x,  -z]; // 南から北を見る: 右=東
-    case 'N': return (x, _y, z) => [-x, -z]; // 北から南を見る: 右=西
-    case 'E': return (_x, y, z) => [y,  -z]; // 東から西を見る: 右=北
-    case 'W': return (_x, y, z) => [-y, -z]; // 西から東を見る: 右=南
+  const xGrid: number[] = [];
+  for (let i = 0; i <= colsEW; i++) xGrid.push((i - colsEW / 2) * ewSpacing);
+  const yGrid: number[] = [];
+  for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
+
+  const ysH = rack.yokosanH / 1000;
+  const tsH = rack.tatesanH / 1000;
+  const ewTotal = xGrid[xGrid.length - 1] - xGrid[0];
+  const tCount = Math.max(1, colsEW * rack.tatesanPerSpan);
+
+  const els: React.ReactElement[] = [];
+  let k = 0;
+
+  // 柱 (Posts) — at every grid intersection
+  for (const gx of xGrid) {
+    for (const gy of yGrid) {
+      const [x0, y0] = sv(gx, gy, 0);
+      const [x1, y1] = sv(gx, gy, mountHeight);
+      els.push(<line key={k++} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#2b7dc7" strokeWidth="0.10" />);
+    }
   }
+  // ヨコサン — at every NS grid line (EW direction)
+  for (const gy of yGrid) {
+    const [x0, y0] = sv(xGrid[0], gy, mountHeight + ysH / 2);
+    const [x1, y1] = sv(xGrid[xGrid.length - 1], gy, mountHeight + ysH / 2);
+    els.push(<line key={k++} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#cc44aa" strokeWidth="0.10" />);
+  }
+  // タテサン — NS purlins
+  for (let i = 0; i < tCount; i++) {
+    const gx = xGrid[0] + (i + 0.5) / tCount * ewTotal;
+    const [x0, y0] = sv(gx, yGrid[0], mountHeight + ysH + tsH / 2);
+    const [x1, y1] = sv(gx, yGrid[yGrid.length - 1], mountHeight + ysH + tsH / 2);
+    els.push(<line key={k++} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#22aa33" strokeWidth="0.07" />);
+  }
+  // 筋交い — X-bracing at outer NS lines
+  if (rack.hasBrace && rack.braceDiameterMm > 0) {
+    for (const gy of [yGrid[0], yGrid[yGrid.length - 1]]) {
+      for (let i = 0; i < xGrid.length - 1; i++) {
+        const [ax0, ay0] = sv(xGrid[i],     gy, 0.05);
+        const [ax1, ay1] = sv(xGrid[i + 1], gy, mountHeight);
+        const [bx0, by0] = sv(xGrid[i],     gy, mountHeight);
+        const [bx1, by1] = sv(xGrid[i + 1], gy, 0.05);
+        els.push(<line key={k++} x1={ax0} y1={ay0} x2={ax1} y2={ay1} stroke="#8a6a20" strokeWidth="0.06" />);
+        els.push(<line key={k++} x1={bx0} y1={by0} x2={bx1} y2={by1} stroke="#8a6a20" strokeWidth="0.06" />);
+      }
+    }
+  }
+  return <>{els}</>;
 }
 
+// Rack bbox helper (for expanding viewbox to include structural members)
+function pergolaRackBBox(
+  cfg: PanelConfig, rack: PergolaRackSpec,
+  toSVG: (x: number, y: number, z: number) => [number, number]
+): { xMin: number; xMax: number; yMin: number; yMax: number } {
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const rotRad = rackRotation * Math.PI / 180;
+  const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  const topZ = mountHeight + rack.yokosanH / 1000 + rack.tatesanH / 1000;
+  for (let i = 0; i <= colsEW; i++) {
+    for (let j = 0; j <= rowsNS; j++) {
+      const ex = (i - colsEW / 2) * ewSpacing;
+      const en = (j - rowsNS / 2) * nsSpacing;
+      const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
+      for (const ez of [0, topZ]) {
+        const [sx, sy] = toSVG(rx, ry, ez);
+        xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
+        yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
+      }
+    }
+  }
+  return { xMin, xMax, yMin, yMax };
+}
+
+// ===== Elevation View =====
+
+type ElevDir = 'front' | 'back' | 'right' | 'left';
+const ELEV_DIRS: { key: ElevDir; label: string }[] = [
+  { key: 'front', label: '正面' },
+  { key: 'back',  label: '背面' },
+  { key: 'right', label: '右側面' },
+  { key: 'left',  label: '左側面' },
+];
+
 function ElevationView({ installation }: { installation: FieldInstallation }) {
-  const [dir, setDir] = useState<ElevDir>('S');
+  const [dir, setDir] = useState<ElevDir>('front');
   const { config, installationType } = installation;
+  const az = getAzimuth(installation);
+  const fwdE = Math.sin(az * Math.PI / 180);
+  const fwdN = Math.cos(az * Math.PI / 180);
+
+  // Panel-frame relative projections
+  // front: looking from the facing direction (正面 = face side of panels)
+  // right/left: when standing in front and facing the panels
+  const toSVG = (x: number, y: number, z: number): [number, number] => {
+    switch (dir) {
+      case 'front': return [-fwdN * x + fwdE * y, -z];
+      case 'back':  return [ fwdN * x - fwdE * y, -z];
+      case 'right': return [-fwdE * x - fwdN * y, -z];
+      case 'left':  return [ fwdE * x + fwdN * y, -z];
+    }
+  };
 
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
     : generateSlopePanels(config as SlopeConfig);
-
-  const toSVG = elevToSVG(dir);
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = -Infinity;
   for (const p of panels) {
@@ -674,6 +767,12 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
       svgYMin = Math.min(svgYMin, sy); svgYMax = Math.max(svgYMax, sy);
     }
   }
+  // Expand bbox to include full rack structure
+  if (installationType === 'pergola') {
+    const rb = pergolaRackBBox(config as PanelConfig, getEffectiveRack(installation) as PergolaRackSpec, toSVG);
+    svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
+    svgYMin = Math.min(svgYMin, rb.yMin); svgYMax = Math.max(svgYMax, rb.yMax);
+  }
   svgYMax = Math.max(svgYMax, 0);
 
   const mg = 2.5;
@@ -682,24 +781,28 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
   const mountH = installationType === 'pergola'
     ? (config as PanelConfig).mountHeight
     : (config as SlopeConfig).baseMountHeight;
-  const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.65)' : 'rgba(213,94,10,0.65)';
+  const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.55)' : 'rgba(213,94,10,0.55)';
   const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
-  const dirInfo = ELEV_DIRS.find(d => d.key === dir)!;
+
+  const dirTitles: Record<ElevDir, string> = {
+    front: `正面図（パネル前面 ${azLabel(az)}向き）`,
+    back: `背面図（パネル背面側）`,
+    right: `右側面図`,
+    left: `左側面図`,
+  };
 
   return (
     <div className="svg-drawing-wrap">
       <div className="drawing-info-bar">
-        <span className="dv-label">{dirInfo.label}</span>
-        <span>{dirInfo.desc}</span>
-        <span>設置高さ {mountH.toFixed(1)} m</span>
+        <span className="dv-label">{dirTitles[dir]}</span>
+        <span>方位 {az}° ／ 設置高さ {mountH.toFixed(1)} m</span>
         <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
           {ELEV_DIRS.map(d => (
             <button
               key={d.key}
-              className={`btn-draw-action${dir === d.key ? ' active-dir' : ''}`}
-              style={dir === d.key ? { background: 'rgba(255,255,255,0.38)', fontWeight: 700 } : {}}
+              className={`dv-dir-btn${dir === d.key ? ' active' : ''}`}
               onClick={() => setDir(d.key)}
-            >{d.key}面</button>
+            >{d.label}</button>
           ))}
         </div>
       </div>
@@ -707,18 +810,17 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
         <SvgDefs />
         <rect x={vbX} y={0} width={vbW} height={mg} fill="rgba(104,148,106,0.2)" />
         <line x1={vbX} y1={0} x2={vbX + vbW} y2={0} stroke="#68946a" strokeWidth="0.08" />
-        {installationType === 'pergola' && (() => {
-          const h = (config as PanelConfig).mountHeight;
-          return (
-            <>
-              <line x1={svgXMin} y1={0} x2={svgXMin} y2={-h} stroke="#2b7dc7" strokeWidth="0.1" />
-              <line x1={svgXMax} y1={0} x2={svgXMax} y2={-h} stroke="#2b7dc7" strokeWidth="0.1" />
-              <line x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#cc44aa" strokeWidth="0.07" />
-              <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-h} offset={-1.4}
-                label={`${h.toFixed(2)} m`} color="#c53030" />
-            </>
-          );
-        })()}
+        {installationType === 'pergola' && (
+          <PergolaRackSVG
+            cfg={config as PanelConfig}
+            rack={getEffectiveRack(installation) as PergolaRackSpec}
+            toSVG={toSVG}
+          />
+        )}
+        {installationType === 'pergola' && (
+          <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
+            label={`${mountH.toFixed(2)} m`} color="#c53030" />
+        )}
         {installationType === 'slope' && mountH > 0 && (
           <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
             label={`基礎 ${mountH.toFixed(2)} m`} color="#c53030" />
@@ -777,12 +879,19 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
   ];
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = 0;
-  for (const p of sectionPanels) {
+  // Use all panels for bbox (rack spans full width)
+  for (const p of panels) {
     for (const c of p.corners) {
       const [sx, sy] = toSVG(c.x, c.y, c.z);
       svgXMin = Math.min(svgXMin, sx); svgXMax = Math.max(svgXMax, sx);
       svgYMin = Math.min(svgYMin, sy);
     }
+  }
+  // Expand bbox to include rack structure
+  if (installationType === 'pergola') {
+    const rb = pergolaRackBBox(config as PanelConfig, getEffectiveRack(installation) as PergolaRackSpec, toSVG);
+    svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
+    svgYMin = Math.min(svgYMin, rb.yMin);
   }
 
   const mg = 3;
@@ -838,20 +947,17 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
             <line x1={vbX} y1={0} x2={vbX + vbW} y2={0} stroke="#68946a" strokeWidth="0.08" />
           </>
         )}
-        {installationType === 'pergola' && (() => {
-          const h = (config as PanelConfig).mountHeight;
-          const [x0] = toSVG(0, (panels[0].corners[3].y + panels[0].corners[2].y) / 2, 0);
-          const [x1] = toSVG(0, (panels[0].corners[0].y + panels[0].corners[1].y) / 2, 0);
-          return (
-            <>
-              <line x1={x0} y1={0} x2={x0} y2={-h} stroke="#2b7dc7" strokeWidth="0.09" />
-              <line x1={x1} y1={0} x2={x1} y2={-h} stroke="#2b7dc7" strokeWidth="0.09" />
-              <line x1={svgXMin} y1={-h} x2={svgXMax} y2={-h} stroke="#cc44aa" strokeWidth="0.07" />
-              <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-h} offset={-1.4}
-                label={`${h.toFixed(2)} m`} color="#c53030" />
-            </>
-          );
-        })()}
+        {installationType === 'pergola' && (
+          <>
+            <PergolaRackSVG
+              cfg={config as PanelConfig}
+              rack={getEffectiveRack(installation) as PergolaRackSpec}
+              toSVG={toSVG}
+            />
+            <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
+              label={`${mountH.toFixed(2)} m`} color="#c53030" />
+          </>
+        )}
         {installationType === 'slope' && mountH > 0 && (
           <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
             label={`基礎 ${mountH.toFixed(2)} m`} color="#c53030" />
