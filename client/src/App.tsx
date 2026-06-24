@@ -456,8 +456,13 @@ export default function App() {
         terrainDrawingMode={terrainDrawingMode}
         drawingVertices={drawingVertices}
       />
-      {showDrawing && activeInst && (
-        <DrawingView installation={activeInst} onClose={() => setShowDrawing(false)} />
+      {showDrawing && (
+        <DrawingView
+          installations={installations}
+          activeId={activeId}
+          onInstallationChange={updateInstallation}
+          onClose={() => setShowDrawing(false)}
+        />
       )}
     </div>
   );

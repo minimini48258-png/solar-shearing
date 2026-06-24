@@ -2,11 +2,9 @@
 .drawing-modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0,0,0,0.52);
   z-index: 2000;
   display: flex;
-  align-items: stretch;
-  justify-content: stretch;
 }
 
 .drawing-modal-inner {
@@ -14,7 +12,7 @@
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: #f8fafc;
+  background: #f4f7fa;
   overflow: hidden;
 }
 
@@ -23,8 +21,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  background: linear-gradient(135deg, #1a3a5c 0%, #2563a8 100%);
+  padding: 9px 14px;
+  background: linear-gradient(135deg, #1a3a5c 0%, #1e5faa 100%);
   color: white;
   flex-shrink: 0;
   gap: 10px;
@@ -34,96 +32,97 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
+.drawing-header-icon { font-size: 17px; }
+.drawing-header-title { font-size: 14px; font-weight: 700; white-space: nowrap; }
 
-.drawing-header-icon { font-size: 18px; }
-
-.drawing-header-title {
-  font-size: 15px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.drawing-inst-badge {
-  background: rgba(255,255,255,0.22);
-  border-radius: 12px;
-  padding: 2px 10px;
+.dv-inst-select {
+  padding: 3px 8px;
   font-size: 12px;
   font-weight: 600;
-}
-
-.drawing-type-badge {
-  border-radius: 10px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.drawing-type-badge.pergola { background: rgba(59,130,246,0.4); }
-.drawing-type-badge.slope   { background: rgba(249,115,22,0.4); }
-
-.drawing-header-right {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.btn-draw-action {
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  border: 1.5px solid rgba(255,255,255,0.4);
+  border: 1.5px solid rgba(255,255,255,0.35);
   border-radius: 5px;
   background: rgba(255,255,255,0.15);
   color: white;
   cursor: pointer;
-  transition: background 0.15s;
+  min-width: 140px;
 }
-.btn-draw-action:hover { background: rgba(255,255,255,0.28); }
+.dv-inst-select option { background: #1a3a5c; color: white; }
 
-.btn-draw-close {
-  padding: 5px 12px;
-  font-size: 12px;
+.drawing-header-right { display: flex; gap: 7px; flex-shrink: 0; }
+
+.btn-draw-action {
+  padding: 4px 12px;
+  font-size: 11px;
   font-weight: 600;
-  border: 1.5px solid rgba(255,100,100,0.5);
+  border: 1.5px solid rgba(255,255,255,0.38);
   border-radius: 5px;
-  background: rgba(220,50,50,0.25);
+  background: rgba(255,255,255,0.14);
   color: white;
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-draw-close:hover { background: rgba(220,50,50,0.5); }
+.btn-draw-action:hover { background: rgba(255,255,255,0.26); }
+
+.btn-draw-close {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1.5px solid rgba(255,80,80,0.5);
+  border-radius: 5px;
+  background: rgba(200,40,40,0.22);
+  color: white;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-draw-close:hover { background: rgba(200,40,40,0.48); }
+
+/* ===== Main layout ===== */
+.drawing-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ===== Drawing area (left) ===== */
+.drawing-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
 
 /* ===== Tab bar ===== */
 .drawing-tab-bar {
   display: flex;
   background: #fff;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 2px solid #e0e5ea;
   flex-shrink: 0;
 }
-
 .drawing-tab {
   flex: 1;
-  padding: 9px 6px;
-  font-size: 13px;
+  padding: 8px 4px;
+  font-size: 12px;
   font-weight: 600;
   color: #6b7280;
   background: none;
   border: none;
-  cursor: pointer;
-  transition: color 0.15s, border-bottom 0.15s;
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
+  cursor: pointer;
+  transition: color 0.12s;
 }
-.drawing-tab:hover:not(.active) { color: #2563eb; background: #f0f7ff; }
+.drawing-tab:hover:not(.active) { background: #f0f7ff; color: #2563eb; }
 .drawing-tab.active { color: #1d4ed8; border-bottom-color: #1d4ed8; }
 
-/* ===== Tab content area ===== */
+/* ===== Tab content ===== */
 .drawing-tab-content {
   flex: 1;
-  overflow: hidden;
   display: flex;
-  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* ===== 3D layout ===== */
@@ -137,7 +136,7 @@
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #d6e8f5;
+  background: #d0e6f5;
   min-height: 0;
 }
 
@@ -146,100 +145,189 @@
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0,0,0,0.45);
-  color: rgba(255,255,255,0.9);
-  font-size: 11px;
-  padding: 4px 12px;
+  background: rgba(0,0,0,0.42);
+  color: rgba(255,255,255,0.92);
+  font-size: 10.5px;
+  padding: 3px 12px;
   border-radius: 20px;
   white-space: nowrap;
   pointer-events: none;
 }
 
 .drawing-3d-spec {
-  width: 240px;
+  width: 230px;
   flex-shrink: 0;
-  border-left: 1px solid #e5e7eb;
+  border-left: 1px solid #dde3ea;
   overflow-y: auto;
   background: #fff;
 }
 
-/* ===== Info bar above SVG drawings ===== */
+/* ===== Info bar ===== */
 .drawing-info-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 7px 16px;
-  background: #f1f5f9;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 12px;
+  gap: 10px;
+  padding: 6px 14px;
+  background: #eef2f8;
+  border-bottom: 1px solid #dde3ea;
+  font-size: 11.5px;
   color: #374151;
   flex-shrink: 0;
   flex-wrap: wrap;
 }
-
 .dv-label {
   font-weight: 700;
   color: #1d4ed8;
   white-space: nowrap;
 }
+.dv-note { font-size: 10px; color: #9ca3af; }
 
-/* ===== SVG Drawing area ===== */
+/* ===== SVG drawing area ===== */
 .svg-drawing-wrap {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #f9fafb;
+  background: #f8f9fb;
 }
-
 .drawing-svg {
   flex: 1;
   display: block;
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: #fff;
-  padding: 8px;
+  background: #ffffff;
 }
 
-/* ===== Spec table ===== */
-.spec-table-wrap {
+/* ===== Edit panel (right) ===== */
+.dv-edit-panel {
+  width: 248px;
+  flex-shrink: 0;
+  background: #fff;
+  border-left: 1px solid #dde3ea;
+  overflow-y: auto;
+  padding: 0 0 16px 0;
+}
+
+.dv-edit-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.dv-type-chip {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+.dv-type-chip.pergola { background: rgba(29,78,216,0.15); color: #1d4ed8; }
+.dv-type-chip.slope   { background: rgba(213,94,10,0.15);  color: #b45309; }
+.dv-edit-inst-name { font-size: 12px; font-weight: 600; color: #1a1a1a; }
+
+.dv-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fafbfc;
+  margin-top: 4px;
+}
+
+.dv-field {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  gap: 6px;
+  border-bottom: 1px solid #f5f5f5;
+}
+.dv-field-label {
+  font-size: 11px;
+  color: #4b5563;
+  width: 84px;
+  flex-shrink: 0;
+}
+.dv-field-input {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.dv-field-input input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 5px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 11.5px;
+  background: #fafafa;
+  font-variant-numeric: tabular-nums;
+}
+.dv-field-input input[type="number"]:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: #fff;
+}
+.dv-field-unit {
+  font-size: 10px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.dv-calc-box {
+  margin: 8px 12px 4px;
+  padding: 7px 10px;
+  background: #f0f7ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #374151;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  gap: 3px;
 }
+.dv-calc-box strong { color: #1d4ed8; font-variant-numeric: tabular-nums; }
 
-.spec-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11.5px;
-}
+/* ===== Spec table ===== */
+.spec-table-wrap { padding: 4px 0; }
+.spec-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .spec-table th {
   text-align: left;
-  padding: 5px 10px;
+  padding: 4px 8px;
   background: #f1f5f9;
   color: #64748b;
   font-weight: 600;
   border-bottom: 1px solid #e2e8f0;
-  width: 50%;
   white-space: nowrap;
+  width: 50%;
 }
 .spec-table td {
-  padding: 5px 10px;
+  padding: 4px 8px;
   color: #1a1a1a;
   border-bottom: 1px solid #f0f0f0;
   font-variant-numeric: tabular-nums;
 }
 
-/* ===== Print styles ===== */
+/* ===== Print ===== */
 @media print {
   .drawing-modal { position: static; background: none; }
   .drawing-modal-inner { height: auto; }
   .drawing-modal-header { background: #1a3a5c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .drawing-main { flex-direction: column; height: auto; }
+  .drawing-area { height: auto; }
   .drawing-tab-bar { display: none; }
-  .drawing-tab-content { overflow: visible; }
+  .drawing-tab-content { overflow: visible; height: auto; }
   .drawing-3d-layout { flex-direction: column; }
-  .three-mount { min-height: 350px; }
-  .drawing-3d-spec { width: 100%; border-left: none; border-top: 1px solid #e5e7eb; }
+  .three-mount { min-height: 300px; }
+  .drawing-3d-spec { width: 100%; border-left: none; border-top: 1px solid #dde3ea; }
+  .dv-edit-panel { width: 100%; border-left: none; border-top: 2px solid #dde3ea; }
   .btn-draw-action, .btn-draw-close { display: none; }
 }
