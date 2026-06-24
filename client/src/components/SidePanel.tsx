@@ -13,7 +13,19 @@ const SPEED_OPTIONS = [
   { label: '×2', value: 40 }, { label: '×4', value: 80 }, { label: '×8', value: 160 },
 ];
 
-interface InstData { id: string; shading: ShadingResult; summary: { totalPanels: number; totalArea: number; estimatedKw: number }; sunPos: SunPosition; }
+interface InstData {
+  id: string;
+  shading: ShadingResult;
+  summary: {
+    totalPanels: number;
+    totalArea: number;
+    estimatedKw: number;
+    bifacialKw?: number;
+    panelModel?: string;
+    wattageSource: 'spec' | 'estimate';
+  };
+  sunPos: SunPosition;
+}
 
 interface Props {
   installations: FieldInstallation[];
@@ -315,9 +327,26 @@ export default function SidePanel({
                     if (!d) return null;
                     return (
                       <div className="summary-box">
+                        {d.summary.panelModel && (
+                          <div className="summary-row" style={{ fontSize: 10, borderBottom: '1px solid #bbf7d0', paddingBottom: 3, marginBottom: 2 }}>
+                            <span>パネル</span>
+                            <strong style={{ fontSize: 10, color: '#166534' }}>{d.summary.panelModel}</strong>
+                          </div>
+                        )}
                         <div className="summary-row"><span>パネル枚数</span><strong>{d.summary.totalPanels} 枚</strong></div>
                         <div className="summary-row"><span>パネル面積</span><strong>{d.summary.totalArea.toFixed(1)} m²</strong></div>
-                        <div className="summary-row"><span>推定容量</span><strong>約 {d.summary.estimatedKw.toFixed(1)} kW</strong></div>
+                        <div className="summary-row">
+                          <span>推定容量</span>
+                          <strong>
+                            {d.summary.estimatedKw.toFixed(2)} kW
+                            {d.summary.wattageSource === 'estimate' && <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 400 }}> (220W/m²概算)</span>}
+                          </strong>
+                        </div>
+                        {d.summary.bifacialKw != null && (
+                          <div className="summary-row">
+                            <span>両面込み容量</span><strong>{d.summary.bifacialKw.toFixed(2)} kW</strong>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}

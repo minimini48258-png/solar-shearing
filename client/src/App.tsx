@@ -140,9 +140,23 @@ export default function App() {
       const panelGJ  = panelsToGeoJSON(panels, inst.location, inst.installationType, inst.id);
       const shadowGJ = shadowsToGeoJSON(shadows, inst.location, inst.installationType, inst.id);
       const shading  = calcShadingResult(inst.id, inst.config, shadows);
-      const summary  = inst.installationType === 'pergola'
+      const baseSummary = inst.installationType === 'pergola'
         ? getPanelSummary(inst.config as PanelConfig)
         : getSlopeSummary(inst.config as SlopeConfig);
+      const ps = inst.panelSpec;
+      const estimatedKw = ps
+        ? baseSummary.totalPanels * ps.wattage / 1000
+        : baseSummary.estimatedKw;
+      const bifacialKw = ps?.isBifacial
+        ? estimatedKw * (1 + ps.bifacialGainPct / 100)
+        : undefined;
+      const summary = {
+        ...baseSummary,
+        estimatedKw,
+        bifacialKw,
+        panelModel: ps ? `${ps.maker} ${ps.model}` : undefined,
+        wattageSource: ps ? 'spec' as const : 'estimate' as const,
+      };
       return { inst, sunPos, shadows, panelGJ, shadowGJ, shading, summary };
     });
   }, [installations, datetime]);
