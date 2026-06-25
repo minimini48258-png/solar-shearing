@@ -476,7 +476,7 @@ function ThreeViewer({ installation }: { installation: FieldInstallation }) {
     const el = mountRef.current;
     if (!el) return;
     const w = el.clientWidth || 600, h = el.clientHeight || 400;
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(w, h);
     el.appendChild(renderer.domElement);
@@ -2017,6 +2017,122 @@ function azLabel(az: number): string {
   return d[Math.round(az / 22.5) % 16];
 }
 
+// ===== Export Utilities =====
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function svgToCanvas(svgEl: SVGSVGElement, scale = 3): Promise<HTMLCanvasElement> {
+  return new Promise((resolve, reject) => {
+    const W = svgEl.clientWidth || 800, H = svgEl.clientHeight || 600;
+    const svgStr = new XMLSerializer().serializeToString(svgEl);
+    const url = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }));
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = W * scale; c.height = H * scale;
+      const ctx = c.getContext('2d')!;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.scale(scale, scale); ctx.drawImage(img, 0, 0, W, H);
+      URL.revokeObjectURL(url); resolve(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG render failed')); };
+    img.src = url;
+  });
+}
+
+function buildMinimalPDF(jpegBytes: Uint8Array, imgW: number, imgH: number): Uint8Array {
+  const B = (s: string) => new Uint8Array([...s].map(c => c.charCodeAt(0) & 0xFF));
+  const chunks: Uint8Array[] = [];
+  const off: number[] = [];
+  let pos = 0;
+  const wb = (b: Uint8Array) => { chunks.push(b); pos += b.length; };
+  const t = (s: string) => wb(B(s));
+  const pw = 1190.55, ph = 841.89, mg = 28.35; // A3横 pt
+  const sc = Math.min((pw - 2 * mg) / imgW, (ph - 2 * mg) / imgH);
+  const dw = (imgW * sc).toFixed(2), dh = (imgH * sc).toFixed(2);
+  const ox = ((pw - imgW * sc) / 2).toFixed(2), oy = ((ph - imgH * sc) / 2).toFixed(2);
+  const cnt = `q\n${dw} 0 0 ${dh} ${ox} ${oy} cm\n/Im0 Do\nQ\n`;
+  t('%PDF-1.4\n%\xC2\xC3\xC4\xC5\n');
+  off[1] = pos; t('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  off[2] = pos; t('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  off[3] = pos; t(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw.toFixed(2)} ${ph.toFixed(2)}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>\nendobj\n`);
+  off[4] = pos; t(`4 0 obj\n<< /Length ${cnt.length} >>\nstream\n${cnt}endstream\nendobj\n`);
+  off[5] = pos; t(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`);
+  wb(jpegBytes); t('\nendstream\nendobj\n');
+  const xp = pos;
+  t('xref\n0 6\n0000000000 65535 f \n');
+  for (let i = 1; i <= 5; i++) t(`${String(off[i]).padStart(10, '0')} 00000 n \n`);
+  t(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xp}\n%%EOF\n`);
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const out = new Uint8Array(total); let p = 0;
+  for (const c of chunks) { out.set(c, p); p += c.length; }
+  return out;
+}
+
+async function exportAsPNG(svgEl: SVGSVGElement, filename: string) {
+  const c = await svgToCanvas(svgEl, 3);
+  c.toBlob(b => { if (b) downloadBlob(b, filename); }, 'image/png');
+}
+
+async function exportAsPDF(svgEl: SVGSVGElement, filename: string) {
+  const c = await svgToCanvas(svgEl, 3);
+  c.toBlob(async b => {
+    if (!b) return;
+    const buf = await b.arrayBuffer();
+    const pdf = buildMinimalPDF(new Uint8Array(buf), c.width, c.height);
+    downloadBlob(new Blob([pdf.buffer as ArrayBuffer], { type: 'application/pdf' }), filename);
+  }, 'image/jpeg', 0.92);
+}
+
+function exportAsDXF(svgEl: SVGSVGElement, filename: string) {
+  const lyr: Record<string, string> = {
+    '#2b7dc7': 'POST', '#cc44aa': 'YOKOSAN', '#22aa33': 'TATESAN', '#8a6a20': 'BRACE',
+    '#1e40af': 'PANEL', '#1d4ed8': 'PANEL', '#b45309': 'PANEL',
+    '#68946a': 'GROUND', '#c53030': 'DIM', '#2563eb': 'DIM', '#555': 'DIM', '#555555': 'DIM',
+    '#e07010': 'CUSTOM', '#e53e3e': 'CUSTOM', '#22aa34': 'CUSTOM',
+  };
+  const col: Record<string, number> = {
+    '#2b7dc7': 5, '#cc44aa': 6, '#22aa33': 3, '#8a6a20': 2,
+    '#1e40af': 5, '#1d4ed8': 5, '#b45309': 2, '#c53030': 1, '#2563eb': 5,
+    '#e07010': 2, '#e53e3e': 1,
+  };
+  const lines: string[] = [
+    '0\nSECTION', '2\nHEADER',
+    '9\n$ACADVER', '1\nAC1009',
+    '9\n$INSUNITS', '70\n4',
+    '0\nENDSEC', '0\nSECTION', '2\nENTITIES',
+  ];
+  const addLn = (x1: number, y1: number, x2: number, y2: number, l: string, c: number) => {
+    if (Math.hypot(x2 - x1, y2 - y1) < 1e-6) return;
+    const s = 1000; // m → mm
+    lines.push('0\nLINE', `8\n${l}`, `62\n${c}`,
+      `10\n${(x1 * s).toFixed(1)}`, `20\n${(-y1 * s).toFixed(1)}`, '30\n0',
+      `11\n${(x2 * s).toFixed(1)}`, `21\n${(-y2 * s).toFixed(1)}`, '31\n0');
+  };
+  for (const el of svgEl.querySelectorAll('line')) {
+    if (el.getAttribute('stroke-dasharray')) continue;
+    const g = (a: string) => parseFloat(el.getAttribute(a) ?? '0');
+    const st = (el.getAttribute('stroke') ?? '#000').toLowerCase();
+    addLn(g('x1'), g('y1'), g('x2'), g('y2'), lyr[st] ?? 'MISC', col[st] ?? 7);
+  }
+  for (const el of svgEl.querySelectorAll('polygon')) {
+    const pts = (el.getAttribute('points') ?? '').trim().split(/\s+/)
+      .map(p => p.split(',').map(Number)).filter(p => p.length === 2 && !isNaN(p[0]) && !isNaN(p[1]));
+    for (let i = 0; i < pts.length; i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+      addLn(x1, y1, x2, y2, 'PANEL', 5);
+    }
+  }
+  lines.push('0\nENDSEC', '0\nEOF');
+  downloadBlob(new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' }), filename);
+}
+
 // ===== Main DrawingView =====
 
 export default function DrawingView({ installations, activeId, onInstallationChange, onClose }: Props) {
@@ -2029,6 +2145,27 @@ export default function DrawingView({ installations, activeId, onInstallationCha
     (patch: Partial<FieldInstallation>) => onInstallationChange(installation.id, patch),
     [installation.id, onInstallationChange]
   );
+
+  const tabLabel = tab === 'plan' ? '平面図' : tab === 'elevation' ? '立面図' : tab === 'section' ? '断面図' : '3D';
+  const exportBase = `${installation.name}_${tabLabel}`;
+
+  const handleExportPNG = () => {
+    if (tab === '3d') {
+      const cv = document.querySelector('.three-mount canvas') as HTMLCanvasElement | null;
+      if (cv) cv.toBlob(b => { if (b) downloadBlob(b, `${exportBase}.png`); });
+      return;
+    }
+    const sv = document.querySelector('.drawing-svg') as SVGSVGElement | null;
+    if (sv) exportAsPNG(sv, `${exportBase}.png`);
+  };
+  const handleExportPDF = () => {
+    const sv = document.querySelector('.drawing-svg') as SVGSVGElement | null;
+    if (sv) exportAsPDF(sv, `${exportBase}.pdf`);
+  };
+  const handleExportDXF = () => {
+    const sv = document.querySelector('.drawing-svg') as SVGSVGElement | null;
+    if (sv) exportAsDXF(sv, `${exportBase}.dxf`);
+  };
 
   const tabs: [DrawingTab, string][] = [
     ['3d', '🏗 3Dビュー'],
@@ -2057,6 +2194,11 @@ export default function DrawingView({ installations, activeId, onInstallationCha
             </select>
           </div>
           <div className="drawing-header-right">
+            <button className="btn-draw-action" onClick={handleExportPNG}>📷 PNG</button>
+            {tab !== '3d' && <>
+              <button className="btn-draw-action" onClick={handleExportPDF}>📄 PDF</button>
+              <button className="btn-draw-action" title="DXF形式 / JW-CADで開けます" onClick={handleExportDXF}>📐 DXF</button>
+            </>}
             <button className="btn-draw-action" onClick={() => window.print()}>🖨 印刷</button>
             <button className="btn-draw-close" onClick={onClose}>✕ 閉じる</button>
           </div>
