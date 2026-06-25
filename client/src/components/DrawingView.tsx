@@ -219,23 +219,27 @@ function addPergolaStructure(
   const yGrid: number[] = [];
   for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
 
-  // Y字筋交いのNS方向の開き幅（ヨコサン接合点から足元まで）
+  // Y字筋交いのNS方向の開き幅（柱頭から地面足元まで）
   const ySpread = nsSpacing * 0.30;
+  const brMat = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 筋交い: brown
 
-  // ===== 柱 (Y字型二脚ポスト: 全グリッド交点に設置) =====
+  // ===== 柱 + Y字筋交い (全グリッド交点に設置) =====
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
   for (const gx of xGrid) {
     for (const gy of yGrid) {
-      const top       = pt(gx, gy, mountHeight);
-      const legFront  = pt(gx, gy - ySpread, 0);
-      const legBack   = pt(gx, gy + ySpread, 0);
-      // Y字の2本足
-      addCylinder(scene, legFront, top, postR, postMat);
-      addCylinder(scene, legBack,  top, postR, postMat);
-      // 各足元にベースプレート
-      for (const legBase of [legFront, legBack]) {
+      const base       = pt(gx, gy, 0);
+      const top        = pt(gx, gy, mountHeight);
+      const braceFront = pt(gx, gy - ySpread, 0);
+      const braceBack  = pt(gx, gy + ySpread, 0);
+      // 直立1本柱
+      addCylinder(scene, base, top, postR, postMat);
+      // Y字筋交い: 柱頭から前後斜め下へ
+      addCylinder(scene, top, braceFront, postR * 0.75, brMat);
+      addCylinder(scene, top, braceBack,  postR * 0.75, brMat);
+      // ベースプレート: 柱足元 + 筋交い足元（計3箇所）
+      for (const foot of [base, braceFront, braceBack]) {
         const plate = new THREE.Mesh(plateGeo, plateMat);
-        plate.position.set(legBase.x, bpt / 2, legBase.z);
+        plate.position.set(foot.x, bpt / 2, foot.z);
         plate.rotation.y = -rotRad;
         scene.add(plate);
       }
@@ -662,15 +666,19 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   const els: React.ReactElement[] = [];
   let k = 0;
 
-  // Y字型筋交い柱 — 全グリッド交点にY字二脚
+  // 柱（直立1本）+ Y字筋交い — 全グリッド交点に配置
   const ySpread = nsSpacing * 0.30;
   for (const gx of xGrid) {
     for (const gy of yGrid) {
-      const [tx, ty]   = sv(gx, gy, mountHeight);      // Y字の頭（ヨコサン接合点）
-      const [fx, fy]   = sv(gx, gy - ySpread, 0);     // 前足
-      const [bkx, bky] = sv(gx, gy + ySpread, 0);     // 後ろ足
-      els.push(<line key={k++} x1={tx} y1={ty} x2={fx}  y2={fy}  stroke="#2b7dc7" strokeWidth="0.10" />);
-      els.push(<line key={k++} x1={tx} y1={ty} x2={bkx} y2={bky} stroke="#2b7dc7" strokeWidth="0.10" />);
+      // 直立柱
+      const [x0, y0] = sv(gx, gy, 0);
+      const [tx, ty] = sv(gx, gy, mountHeight);
+      els.push(<line key={k++} x1={x0} y1={y0} x2={tx} y2={ty} stroke="#2b7dc7" strokeWidth="0.10" />);
+      // Y字筋交い: 柱頭から前後斜め下へ
+      const [fx, fy]   = sv(gx, gy - ySpread, 0);
+      const [bkx, bky] = sv(gx, gy + ySpread, 0);
+      els.push(<line key={k++} x1={tx} y1={ty} x2={fx}  y2={fy}  stroke="#8a6a20" strokeWidth="0.08" />);
+      els.push(<line key={k++} x1={tx} y1={ty} x2={bkx} y2={bky} stroke="#8a6a20" strokeWidth="0.08" />);
     }
   }
   // ヨコサン — at every NS grid line (EW direction)
