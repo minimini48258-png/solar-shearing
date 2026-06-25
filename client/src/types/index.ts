@@ -87,11 +87,19 @@ export const PANEL_PRESETS: (PanelSpec & { key: string })[] = [
 // ===== カスタム描画線 =====
 export interface CustomDrawLine {
   id: string;
-  x1: number; y1: number;
-  x2: number; y2: number;
   color: string;
   width: number;
   label?: string;
+  // 絶対座標モード（単一ビューのみ、3D非対応）
+  x1?: number; y1?: number;
+  x2?: number; y2?: number;
+  // スパン繰り返しモード（全スパン + 3D同期）
+  repeat?: boolean;
+  repeatDir?: 'EW' | 'NS';
+  n1?: number;   // スパン内正規化水平位置 0~1（左ポスト=0, 右ポスト=1）
+  z1m?: number;  // 高さ（m、地面=0）
+  n2?: number;
+  z2m?: number;
 }
 
 // ===== 架台仕様 - 藤棚型（さざ波式ソーラーシェアリング架台） =====

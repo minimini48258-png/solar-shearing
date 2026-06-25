@@ -104,6 +104,30 @@ function computeYGrid(cfg: PanelConfig, rack: PergolaRackSpec): number[] {
   );
 }
 
+// ===== Custom line repeat helpers =====
+
+function getRepeatDir(toSVG: (x: number, y: number, z: number) => [number, number]): 'EW' | 'NS' {
+  return Math.abs(toSVG(1, 0, 0)[0]) >= Math.abs(toSVG(0, 1, 0)[0]) ? 'EW' : 'NS';
+}
+
+function getRepeatGridSVG(
+  dir: 'EW' | 'NS', xGrid: number[], yGrid: number[],
+  toSVG: (x: number, y: number, z: number) => [number, number]
+): number[] {
+  return dir === 'EW'
+    ? xGrid.map(gx => toSVG(gx, 0, 0)[0])
+    : yGrid.map(gy => toSVG(0, gy, 0)[0]);
+}
+
+function findNearestSpanIdx(midX: number, gridSVG: number[]): number {
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < gridSVG.length - 1; i++) {
+    const dist = Math.abs(midX - (gridSVG[i] + gridSVG[i + 1]) / 2);
+    if (dist < bestDist) { bestDist = dist; best = i; }
+  }
+  return best;
+}
+
 // ===== Three.js helpers =====
 
 function addCylinder(
@@ -296,6 +320,35 @@ function addPergolaStructure(
     addCylinder(scene, p1, p2, tsW / 2, tsMat);
   }
 
+  // ===== カスタム繰り返し線（3D同期）=====
+  if (rack.customLines) {
+    for (const lines of Object.values(rack.customLines)) {
+      for (const line of lines) {
+        if (!line.repeat || line.n1 === undefined || line.n2 === undefined) continue;
+        const mat = new THREE.MeshLambertMaterial({ color: line.color });
+        const r = Math.max(0.015, line.width / 2);
+        const { n1, n2, z1m = 0, z2m = 0 } = line;
+        if (line.repeatDir === 'EW') {
+          for (let xi = 0; xi < xGrid.length - 1; xi++) {
+            const sw = xGrid[xi + 1] - xGrid[xi];
+            const ex1 = xGrid[xi] + n1 * sw, ex2 = xGrid[xi] + n2 * sw;
+            for (const gy of yGrid) {
+              addCylinder(scene, pt(ex1, gy, z1m), pt(ex2, gy, z2m), r, mat);
+            }
+          }
+        } else if (line.repeatDir === 'NS') {
+          for (let yi = 0; yi < yGrid.length - 1; yi++) {
+            const sw = yGrid[yi + 1] - yGrid[yi];
+            const ey1 = yGrid[yi] + n1 * sw, ey2 = yGrid[yi] + n2 * sw;
+            for (const gx of xGrid) {
+              addCylinder(scene, pt(gx, ey1, z1m), pt(gx, ey2, z2m), r, mat);
+            }
+          }
+        }
+      }
+    }
+  }
+
 }
 
 function addSlopeStructure(
@@ -458,6 +511,38 @@ function ThreeViewer({ installation }: { installation: FieldInstallation }) {
       <div className="three-hint">ドラッグ: 回転 ／ ホイール: ズーム ／ 右ドラッグ: 移動</div>
     </div>
   );
+}
+
+// ===== Custom lines SVG renderer =====
+
+function CustomLinesRenderer({ lines, xGrid, yGrid, toSVG }: {
+  lines: CustomDrawLine[];
+  xGrid: number[]; yGrid: number[];
+  toSVG: (x: number, y: number, z: number) => [number, number];
+}) {
+  const elements: React.ReactElement[] = [];
+  for (const line of lines) {
+    if (line.repeat && line.n1 !== undefined && line.n2 !== undefined) {
+      const rDir = line.repeatDir ?? 'EW';
+      const gridSVG = getRepeatGridSVG(rDir, xGrid, yGrid, toSVG);
+      for (let i = 0; i < gridSVG.length - 1; i++) {
+        const spanW = gridSVG[i + 1] - gridSVG[i];
+        elements.push(
+          <line key={`${line.id}-${i}`}
+            x1={gridSVG[i] + line.n1 * spanW} y1={-(line.z1m ?? 0)}
+            x2={gridSVG[i] + line.n2 * spanW} y2={-(line.z2m ?? 0)}
+            stroke={line.color} strokeWidth={line.width} strokeLinecap="round" />
+        );
+      }
+    } else if (line.x1 !== undefined) {
+      elements.push(
+        <line key={line.id}
+          x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
+          stroke={line.color} strokeWidth={line.width} strokeLinecap="round" />
+      );
+    }
+  }
+  return <>{elements}</>;
 }
 
 // ===== SVG Helpers =====
@@ -846,6 +931,7 @@ function ElevationView({
   const [drawPreview, setDrawPreview] = useState<[number, number] | null>(null);
   const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0]);
   const [drawWidth, setDrawWidth] = useState(0.10);
+  const [repeatAll, setRepeatAll] = useState(false);
 
   const { config, installationType } = installation;
   const az = getAzimuth(installation);
@@ -956,12 +1042,33 @@ function ElevationView({
     } else {
       const rack = getEffectiveRack(installation) as PergolaRackSpec;
       const existing = rack.customLines?.[dir] ?? [];
-      const newLine: CustomDrawLine = {
-        id: Date.now().toString(),
-        x1: drawStart[0], y1: drawStart[1],
-        x2: pos[0], y2: pos[1],
-        color: drawColor, width: drawWidth,
-      };
+      let newLine: CustomDrawLine;
+
+      if (repeatAll && installationType === 'pergola') {
+        const cfg = config as PanelConfig;
+        const xGrid = computeXGrid(cfg, rack);
+        const yGrid = computeYGrid(cfg, rack);
+        const rDir = getRepeatDir(toSVG);
+        const gridSVG = getRepeatGridSVG(rDir, xGrid, yGrid, toSVG);
+        const midX = (drawStart[0] + pos[0]) / 2;
+        const si = findNearestSpanIdx(midX, gridSVG);
+        const spanW = (gridSVG[si + 1] ?? gridSVG[si]) - gridSVG[si];
+        if (Math.abs(spanW) > 0.001) {
+          newLine = {
+            id: Date.now().toString(), color: drawColor, width: drawWidth,
+            repeat: true, repeatDir: rDir,
+            n1: (drawStart[0] - gridSVG[si]) / spanW,
+            z1m: -drawStart[1],
+            n2: (pos[0] - gridSVG[si]) / spanW,
+            z2m: -pos[1],
+          };
+        } else {
+          newLine = { id: Date.now().toString(), color: drawColor, width: drawWidth, x1: drawStart[0], y1: drawStart[1], x2: pos[0], y2: pos[1] };
+        }
+      } else {
+        newLine = { id: Date.now().toString(), color: drawColor, width: drawWidth, x1: drawStart[0], y1: drawStart[1], x2: pos[0], y2: pos[1] };
+      }
+
       onChange({ rackSpec: { ...rack, customLines: { ...(rack.customLines ?? {}), [dir]: [...existing, newLine] } } });
       setDrawStart(null);
       setDrawPreview(null);
@@ -1020,6 +1127,10 @@ function ElevationView({
           )}
           {drawMode && (
             <>
+              <label style={{ fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={repeatAll} onChange={e => setRepeatAll(e.target.checked)} style={{ cursor: 'pointer' }} />
+                全スパン
+              </label>
               {DRAW_COLORS.map(c => (
                 <div key={c} onClick={() => setDrawColor(c)}
                   style={{ width: 17, height: 17, background: c, border: drawColor === c ? '2.5px solid #fff' : '1px solid #aaa', borderRadius: 3, cursor: 'pointer', flexShrink: 0, outline: drawColor === c ? '1.5px solid #555' : 'none' }} />
@@ -1086,11 +1197,14 @@ function ElevationView({
           </text>
         )}
         {/* カスタム描画線 */}
-        {currentViewLines.map(line => (
-          <line key={line.id}
-            x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
-            stroke={line.color} strokeWidth={line.width} strokeLinecap="round" />
-        ))}
+        {rackForDraw && (
+          <CustomLinesRenderer
+            lines={currentViewLines}
+            xGrid={computeXGrid(config as PanelConfig, rackForDraw)}
+            yGrid={computeYGrid(config as PanelConfig, rackForDraw)}
+            toSVG={toSVG}
+          />
+        )}
         {/* 描画プレビュー */}
         {drawMode && drawStart && drawPreview && (
           <line x1={drawStart[0]} y1={drawStart[1]} x2={drawPreview[0]} y2={drawPreview[1]}
@@ -1125,6 +1239,7 @@ function SectionView({ installation, onChange }: {
   const [drawPreview, setDrawPreview] = useState<[number, number] | null>(null);
   const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0]);
   const [drawWidth, setDrawWidth] = useState(0.10);
+  const [repeatAll, setRepeatAll] = useState(false);
 
   const { config, installationType } = installation;
   const az = getAzimuth(installation);
@@ -1187,12 +1302,33 @@ function SectionView({ installation, onChange }: {
     } else {
       const rack = getEffectiveRack(installation) as PergolaRackSpec;
       const existing = rack.customLines?.['section'] ?? [];
-      const newLine: CustomDrawLine = {
-        id: Date.now().toString(),
-        x1: drawStart[0], y1: drawStart[1],
-        x2: pos[0], y2: pos[1],
-        color: drawColor, width: drawWidth,
-      };
+      let newLine: CustomDrawLine;
+
+      if (repeatAll && installationType === 'pergola') {
+        const cfg = config as PanelConfig;
+        const xGrid = computeXGrid(cfg, rack);
+        const yGrid = computeYGrid(cfg, rack);
+        const rDir = getRepeatDir(toSVG);
+        const gridSVG = getRepeatGridSVG(rDir, xGrid, yGrid, toSVG);
+        const midX = (drawStart[0] + pos[0]) / 2;
+        const si = findNearestSpanIdx(midX, gridSVG);
+        const spanW = (gridSVG[si + 1] ?? gridSVG[si]) - gridSVG[si];
+        if (Math.abs(spanW) > 0.001) {
+          newLine = {
+            id: Date.now().toString(), color: drawColor, width: drawWidth,
+            repeat: true, repeatDir: rDir,
+            n1: (drawStart[0] - gridSVG[si]) / spanW,
+            z1m: -drawStart[1],
+            n2: (pos[0] - gridSVG[si]) / spanW,
+            z2m: -pos[1],
+          };
+        } else {
+          newLine = { id: Date.now().toString(), color: drawColor, width: drawWidth, x1: drawStart[0], y1: drawStart[1], x2: pos[0], y2: pos[1] };
+        }
+      } else {
+        newLine = { id: Date.now().toString(), color: drawColor, width: drawWidth, x1: drawStart[0], y1: drawStart[1], x2: pos[0], y2: pos[1] };
+      }
+
       onChange({ rackSpec: { ...rack, customLines: { ...(rack.customLines ?? {}), section: [...existing, newLine] } } });
       setDrawStart(null);
       setDrawPreview(null);
@@ -1282,6 +1418,10 @@ function SectionView({ installation, onChange }: {
           )}
           {drawMode && (
             <>
+              <label style={{ fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={repeatAll} onChange={e => setRepeatAll(e.target.checked)} style={{ cursor: 'pointer' }} />
+                全スパン
+              </label>
               {DRAW_COLORS.map(c => (
                 <div key={c} onClick={() => setDrawColor(c)}
                   style={{ width: 17, height: 17, background: c, border: drawColor === c ? '2.5px solid #fff' : '1px solid #aaa', borderRadius: 3, cursor: 'pointer', flexShrink: 0, outline: drawColor === c ? '1.5px solid #555' : 'none' }} />
@@ -1369,11 +1509,14 @@ function SectionView({ installation, onChange }: {
         <DimLine x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
           offset={1.3} label={`${(-svgYMin).toFixed(2)} m`} />
         {/* カスタム描画線（断面図） */}
-        {sectionLines.map(line => (
-          <line key={line.id}
-            x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
-            stroke={line.color} strokeWidth={line.width} strokeLinecap="round" />
-        ))}
+        {rackForDraw && (
+          <CustomLinesRenderer
+            lines={sectionLines}
+            xGrid={computeXGrid(config as PanelConfig, rackForDraw)}
+            yGrid={computeYGrid(config as PanelConfig, rackForDraw)}
+            toSVG={toSVG}
+          />
+        )}
         {drawMode && drawStart && drawPreview && (
           <line x1={drawStart[0]} y1={drawStart[1]} x2={drawPreview[0]} y2={drawPreview[1]}
             stroke={drawColor} strokeWidth={drawWidth} strokeLinecap="round"
