@@ -78,6 +78,32 @@ function getEffectivePanelSpec(inst: FieldInstallation): PanelSpec {
   return inst.panelSpec ?? PANEL_PRESETS[0];
 }
 
+// EW方向グリッド: postColsEW 本を架台幅に等間隔配置
+function computeXGrid(cfg: PanelConfig, rack: PergolaRackSpec): number[] {
+  const ewTotal = cfg.colsEW * cfg.ewSpacing;
+  const n = Math.max(2, rack.postColsEW ?? (cfg.colsEW + 1));
+  return Array.from({ length: n }, (_, i) => -ewTotal / 2 + i * ewTotal / (n - 1));
+}
+
+// NS方向グリッド: ヨコサンをパネルNS端部に自動配置
+// yokosanRowsNS が指定されていれば等間隔で分割
+function computeYGrid(cfg: PanelConfig, rack: PergolaRackSpec): number[] {
+  const nsTotal = cfg.rowsNS * cfg.nsSpacing;
+  if (rack.yokosanRowsNS !== undefined) {
+    const n = Math.max(2, rack.yokosanRowsNS);
+    return Array.from({ length: n }, (_, j) => -nsTotal / 2 + j * nsTotal / (n - 1));
+  }
+  // 自動: パネルNS端部（前縁・後縁）にヨコサンを配置
+  const depthH = cfg.panelDepth * Math.cos(cfg.tiltAngle * Math.PI / 180);
+  const set = new Set<number>();
+  for (let row = 0; row < cfg.rowsNS; row++) {
+    const cy = (row - (cfg.rowsNS - 1) / 2) * cfg.nsSpacing;
+    set.add(+(cy - depthH / 2).toFixed(6));
+    set.add(+(cy + depthH / 2).toFixed(6));
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
 // ===== Three.js helpers =====
 
 function addCylinder(
@@ -211,19 +237,13 @@ function addPergolaStructure(
   const bp    = rack.basePlateWidthMm / 1000;
   const bpt   = rack.basePlateThicknessMm / 1000;
   const ysH   = rack.yokosanH / 1000;
-  const tsH   = rack.tatesanH / 1000;
   const tsW   = rack.tatesanW / 1000;
 
-  // 架台グリッド: パネル配置と独立して設定可能
+  // 架台グリッド
   const ewTotal  = colsEW * ewSpacing;
-  const nsTotal  = rowsNS * nsSpacing;
-  const pColsEW  = Math.max(2, rack.postColsEW  ?? (colsEW + 1));
-  const yRowsNS  = Math.max(2, rack.yokosanRowsNS ?? (rowsNS + 1));
-
-  const xGrid: number[] = [];
-  for (let i = 0; i < pColsEW; i++) xGrid.push(-ewTotal / 2 + i * ewTotal / (pColsEW - 1));
-  const yGrid: number[] = [];
-  for (let j = 0; j < yRowsNS; j++) yGrid.push(-nsTotal / 2 + j * nsTotal / (yRowsNS - 1));
+  const xGrid    = computeXGrid(cfg, rack);
+  const yGrid    = computeYGrid(cfg, rack);  // パネルNS端部に自動配置
+  const yRowsNS  = yGrid.length;
 
   // パネルはヨコサンの上に直接設置
   const postTopZ   = mountHeight - ysH;           // 支柱頂部 = ヨコサン底面
@@ -667,18 +687,12 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   };
 
   const ysH = rack.yokosanH / 1000;
-  const tsH = rack.tatesanH / 1000;
 
-  // 架台グリッド: パネル配置と独立して設定可能
+  // 架台グリッド
   const ewTotal  = colsEW * ewSpacing;
-  const nsTotal  = rowsNS * nsSpacing;
-  const pColsEW  = Math.max(2, rack.postColsEW  ?? (colsEW + 1));
-  const yRowsNS  = Math.max(2, rack.yokosanRowsNS ?? (rowsNS + 1));
-
-  const xGrid: number[] = [];
-  for (let i = 0; i < pColsEW; i++) xGrid.push(-ewTotal / 2 + i * ewTotal / (pColsEW - 1));
-  const yGrid: number[] = [];
-  for (let j = 0; j < yRowsNS; j++) yGrid.push(-nsTotal / 2 + j * nsTotal / (yRowsNS - 1));
+  const xGrid    = computeXGrid(cfg, rack);
+  const yGrid    = computeYGrid(cfg, rack);  // パネルNS端部に自動配置
+  const yRowsNS  = yGrid.length;
 
   const tCount = Math.max(1, colsEW * rack.tatesanPerSpan);
 
@@ -731,19 +745,15 @@ function pergolaRackBBox(
   cfg: PanelConfig, rack: PergolaRackSpec,
   toSVG: (x: number, y: number, z: number) => [number, number]
 ): { xMin: number; xMax: number; yMin: number; yMax: number } {
-  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const { mountHeight, rackRotation } = cfg;
   const rotRad = rackRotation * Math.PI / 180;
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
   let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
   const ysH  = rack.yokosanH / 1000;
-  const ewTotal  = colsEW * ewSpacing;
-  const nsTotal  = rowsNS * nsSpacing;
-  const pColsEW  = Math.max(2, rack.postColsEW  ?? (colsEW + 1));
-  const yRowsNS  = Math.max(2, rack.yokosanRowsNS ?? (rowsNS + 1));
-  for (let i = 0; i < pColsEW; i++) {
-    const ex = -ewTotal / 2 + i * ewTotal / (pColsEW - 1);
-    for (let j = 0; j < yRowsNS; j++) {
-      const en = -nsTotal / 2 + j * nsTotal / (yRowsNS - 1);
+  const xGrid = computeXGrid(cfg, rack);
+  const yGrid = computeYGrid(cfg, rack);
+  for (const ex of xGrid) {
+    for (const en of yGrid) {
       const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
       for (const ez of [0, mountHeight, mountHeight - ysH]) {
         const [sx, sy] = toSVG(rx, ry, ez);
