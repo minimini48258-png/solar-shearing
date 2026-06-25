@@ -85,23 +85,18 @@ function computeXGrid(cfg: PanelConfig, rack: PergolaRackSpec): number[] {
   return Array.from({ length: n }, (_, i) => -ewTotal / 2 + i * ewTotal / (n - 1));
 }
 
-// NS方向グリッド: ヨコサンをパネルNS端部に自動配置
-// yokosanRowsNS が指定されていれば等間隔で分割
+// NS方向グリッド: パネルNS中心に1本ずつ配置（1本軸）
+// yokosanRowsNS が指定されていれば等間隔で任意本数に分割
 function computeYGrid(cfg: PanelConfig, rack: PergolaRackSpec): number[] {
   const nsTotal = cfg.rowsNS * cfg.nsSpacing;
   if (rack.yokosanRowsNS !== undefined) {
     const n = Math.max(2, rack.yokosanRowsNS);
     return Array.from({ length: n }, (_, j) => -nsTotal / 2 + j * nsTotal / (n - 1));
   }
-  // 自動: パネルNS端部（前縁・後縁）にヨコサンを配置
-  const depthH = cfg.panelDepth * Math.cos(cfg.tiltAngle * Math.PI / 180);
-  const set = new Set<number>();
-  for (let row = 0; row < cfg.rowsNS; row++) {
-    const cy = (row - (cfg.rowsNS - 1) / 2) * cfg.nsSpacing;
-    set.add(+(cy - depthH / 2).toFixed(6));
-    set.add(+(cy + depthH / 2).toFixed(6));
-  }
-  return Array.from(set).sort((a, b) => a - b);
+  // 自動: パネルNS中心に1本配置（1パネル = 1本軸）
+  return Array.from({ length: cfg.rowsNS }, (_, row) =>
+    (row - (cfg.rowsNS - 1) / 2) * cfg.nsSpacing
+  );
 }
 
 // ===== Three.js helpers =====
