@@ -84,6 +84,16 @@ export const PANEL_PRESETS: (PanelSpec & { key: string })[] = [
   },
 ];
 
+// ===== カスタム描画線 =====
+export interface CustomDrawLine {
+  id: string;
+  x1: number; y1: number;
+  x2: number; y2: number;
+  color: string;
+  width: number;
+  label?: string;
+}
+
 // ===== 架台仕様 - 藤棚型（さざ波式ソーラーシェアリング架台） =====
 export interface PergolaRackSpec {
   // 柱 (Posts)
@@ -108,6 +118,10 @@ export interface PergolaRackSpec {
   braceThicknessMm: number;    // 肉厚 mm (e.g., 2.3)
   braceAttachY: number;        // 支柱取付高さ比率 0~1 (Y軸: 0=根元, 1=支柱頂部)
   braceReachX: number;         // NS方向伸び比率 0~1 (X軸: 0=支柱直上, 1=隣ヨコサン位置まで)
+  // タテサン位置
+  tatesanZRatio?: number;      // タテサン高さ比率 0~1 (省略時=0.5, 支柱中間)
+  // カスタム描画線 (立面図・断面図に重ね描き)
+  customLines?: Record<string, CustomDrawLine[]>; // キー='front'/'back'/'left'/'right'/'section'
   // ベースプレート (Base plates)
   basePlateWidthMm: number;    // (e.g., 250)
   basePlateThicknessMm: number;// (e.g., 12)

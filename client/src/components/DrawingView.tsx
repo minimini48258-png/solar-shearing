@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   FieldInstallation, PanelConfig, SlopeConfig, AnyConfig, PanelPolygon, PanelSpec,
-  PergolaRackSpec, SlopeRackSpec, PANEL_PRESETS,
+  PergolaRackSpec, SlopeRackSpec, PANEL_PRESETS, CustomDrawLine,
 } from '../types';
 import { generatePanels } from '../lib/panelGeometry';
 import { generateSlopePanels } from '../lib/slopePanelGeometry';
@@ -38,6 +38,11 @@ const DEF_SLOPE_RACK: SlopeRackSpec = {
   horizRailH: 60, horizRailW: 30, horizRailT: 2.3,
   hasBrace: true,
   foundationType: 'pile', foundationDepthM: 1.5, pileDiameterMm: 114.3,
+};
+
+const DRAW_COLORS = ['#8a6a20', '#e53e3e', '#2b7dc7', '#1a1a1a', '#22aa33', '#e07010'] as const;
+const VIEW_LABELS: Record<string, string> = {
+  front: '正面', back: '背面', right: '右側面', left: '左側面', section: '断面',
 };
 
 // ===== Coordinate helpers =====
@@ -241,9 +246,9 @@ function addPergolaStructure(
   const yRowsNS  = yGrid.length;
 
   // パネルはヨコサンの上に直接設置
-  const postTopZ   = mountHeight - ysH;           // 支柱頂部 = ヨコサン底面
-  const yokosanZ   = mountHeight - ysH / 2;       // ヨコサン中心（上面 = mountHeight）
-  const tatesanZ   = postTopZ * 0.5;              // タテサン（NS横補強材、支柱中間）
+  const postTopZ   = mountHeight - ysH;                               // 支柱頂部 = ヨコサン底面
+  const yokosanZ   = mountHeight - ysH / 2;                           // ヨコサン中心（上面 = mountHeight）
+  const tatesanZ   = postTopZ * (rack.tatesanZRatio ?? 0.5);          // タテサン（NS横補強材）
   const brMat      = new THREE.MeshLambertMaterial({ color: 0x8a6a20 });
   const attachY    = rack.braceAttachY ?? 0.65;
   const reachX     = rack.braceReachX  ?? 1.0;
@@ -695,9 +700,9 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   let k = 0;
 
   // パネルはヨコサンの上に直接設置
-  const postTopZ_s = mountHeight - ysH;           // 支柱頂部 = ヨコサン底面
-  const yokosanZ_s = mountHeight - ysH / 2;       // ヨコサン中心（上面 = mountHeight）
-  const tatesanZ_s = postTopZ_s * 0.5;            // タテサン（NS補強材、支柱中間）
+  const postTopZ_s = mountHeight - ysH;                               // 支柱頂部 = ヨコサン底面
+  const yokosanZ_s = mountHeight - ysH / 2;                           // ヨコサン中心（上面 = mountHeight）
+  const tatesanZ_s = postTopZ_s * (rack.tatesanZRatio ?? 0.5);        // タテサン（NS補強材）
   const attachY    = rack.braceAttachY ?? 0.65;
   const reachX     = rack.braceReachX  ?? 1.0;
   for (const gx of xGrid) {
@@ -835,6 +840,13 @@ function ElevationView({
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ startY: number; startMH: number } | null>(null);
 
+  // Draw mode state
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawStart, setDrawStart] = useState<[number, number] | null>(null);
+  const [drawPreview, setDrawPreview] = useState<[number, number] | null>(null);
+  const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0]);
+  const [drawWidth, setDrawWidth] = useState(0.10);
+
   const { config, installationType } = installation;
   const az = getAzimuth(installation);
   const fwdE = Math.sin(az * Math.PI / 180);
@@ -877,8 +889,32 @@ function ElevationView({
   const pFill    = installationType === 'pergola' ? 'rgba(29,78,216,0.55)' : 'rgba(213,94,10,0.55)';
   const pStroke  = installationType === 'pergola' ? '#1e40af' : '#b45309';
   const canDrag  = installationType === 'pergola' && !!onChange;
+  const canDraw  = installationType === 'pergola' && !!onChange;
 
-  // SVG pixel → SVG unit 変換スケール
+  // カスタム描画線（現在ビュー分）
+  const rackForDraw = installationType === 'pergola'
+    ? (getEffectiveRack(installation) as PergolaRackSpec) : null;
+  const currentViewLines: CustomDrawLine[] = rackForDraw?.customLines?.[dir] ?? [];
+
+  // dir または installation が変わったら描画状態リセット
+  useEffect(() => {
+    setDrawStart(null);
+    setDrawPreview(null);
+  }, [dir, installation.id]);
+
+  // SVG座標変換（getScreenCTM使用）
+  const getSVGPos = (e: React.MouseEvent): [number, number] | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const sp = pt.matrixTransform(ctm.inverse());
+    return [sp.x, sp.y];
+  };
+
+  // SVG pixel → SVG unit 変換スケール（ドラッグ用）
   const getSVGScaleY = (): number => {
     const el = svgRef.current;
     if (!el) return 1;
@@ -887,13 +923,17 @@ function ElevationView({
   };
 
   const handlePanelMouseDown = (e: React.MouseEvent) => {
-    if (!canDrag) return;
+    if (!canDrag || drawMode) return;
     e.preventDefault();
     dragRef.current = { startY: e.clientY, startMH: (config as PanelConfig).mountHeight };
     setQsPos({ x: e.clientX, y: e.clientY });
   };
 
   const handleSVGMouseMove = (e: React.MouseEvent) => {
+    if (drawMode && drawStart) {
+      setDrawPreview(getSVGPos(e));
+      return;
+    }
     if (!dragRef.current || !onChange) return;
     const dy    = e.clientY - dragRef.current.startY;
     const scale = getSVGScaleY();
@@ -904,6 +944,48 @@ function ElevationView({
 
   const handleSVGMouseUp = () => {
     dragRef.current = null;
+  };
+
+  // ---- 描画ハンドラー ----
+  const handleSVGClick = (e: React.MouseEvent) => {
+    if (!drawMode || !onChange || dragRef.current) return;
+    const pos = getSVGPos(e);
+    if (!pos) return;
+    if (!drawStart) {
+      setDrawStart(pos);
+    } else {
+      const rack = getEffectiveRack(installation) as PergolaRackSpec;
+      const existing = rack.customLines?.[dir] ?? [];
+      const newLine: CustomDrawLine = {
+        id: Date.now().toString(),
+        x1: drawStart[0], y1: drawStart[1],
+        x2: pos[0], y2: pos[1],
+        color: drawColor, width: drawWidth,
+      };
+      onChange({ rackSpec: { ...rack, customLines: { ...(rack.customLines ?? {}), [dir]: [...existing, newLine] } } });
+      setDrawStart(null);
+      setDrawPreview(null);
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (drawMode && drawStart) {
+      e.preventDefault();
+      setDrawStart(null);
+      setDrawPreview(null);
+    }
+  };
+
+  const handleUndoLast = () => {
+    if (!onChange || !rackForDraw) return;
+    const lines = rackForDraw.customLines?.[dir] ?? [];
+    if (lines.length === 0) return;
+    onChange({ rackSpec: { ...rackForDraw, customLines: { ...(rackForDraw.customLines ?? {}), [dir]: lines.slice(0, -1) } } });
+  };
+
+  const handleClearLines = () => {
+    if (!onChange || !rackForDraw) return;
+    onChange({ rackSpec: { ...rackForDraw, customLines: { ...(rackForDraw.customLines ?? {}), [dir]: [] } } });
   };
 
   const dirTitles: Record<ElevDir, string> = {
@@ -918,12 +1000,42 @@ function ElevationView({
       <div className="drawing-info-bar">
         <span className="dv-label">{dirTitles[dir]}</span>
         <span>設置高さ <strong>{mountH.toFixed(2)} m</strong></span>
-        {canDrag && <span className="dv-note">パネルをドラッグ→高さ変更　クリック→設定パネル</span>}
-        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+        {canDrag && !drawMode && <span className="dv-note">パネルをドラッグ→高さ変更　クリック→設定パネル</span>}
+        {drawMode && (
+          <span className="dv-note" style={{ color: '#e07010' }}>
+            {drawStart ? 'クリックで終点を指定（右クリック:キャンセル）' : 'クリックで始点を指定'}
+          </span>
+        )}
+        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto', alignItems: 'center' }}>
           {ELEV_DIRS.map(d => (
             <button key={d.key} className={`dv-dir-btn${dir === d.key ? ' active' : ''}`}
               onClick={() => setDir(d.key)}>{d.label}</button>
           ))}
+          {canDraw && (
+            <button
+              className={`dv-dir-btn${drawMode ? ' active' : ''}`}
+              style={{ marginLeft: 6 }}
+              onClick={() => { setDrawMode(m => !m); setDrawStart(null); setDrawPreview(null); }}
+            >{drawMode ? '✓ 描画終了' : '✏ 線を描く'}</button>
+          )}
+          {drawMode && (
+            <>
+              {DRAW_COLORS.map(c => (
+                <div key={c} onClick={() => setDrawColor(c)}
+                  style={{ width: 17, height: 17, background: c, border: drawColor === c ? '2.5px solid #fff' : '1px solid #aaa', borderRadius: 3, cursor: 'pointer', flexShrink: 0, outline: drawColor === c ? '1.5px solid #555' : 'none' }} />
+              ))}
+              <select style={{ fontSize: 10.5, padding: '2px 3px', border: '1px solid #ccc', borderRadius: 3 }}
+                value={drawWidth} onChange={e => setDrawWidth(+e.target.value)}>
+                <option value={0.05}>細</option>
+                <option value={0.10}>中</option>
+                <option value={0.16}>太</option>
+              </select>
+              {currentViewLines.length > 0 && <>
+                <button className="dv-dir-btn" title="最後の線を取消" onClick={handleUndoLast}>↩</button>
+                <button className="dv-dir-btn" title="このビューの線を全削除" onClick={handleClearLines}>🗑</button>
+              </>}
+            </>
+          )}
         </div>
       </div>
       <svg ref={svgRef}
@@ -932,8 +1044,10 @@ function ElevationView({
         preserveAspectRatio="xMidYMid meet"
         onMouseMove={handleSVGMouseMove}
         onMouseUp={handleSVGMouseUp}
-        onMouseLeave={handleSVGMouseUp}
-        style={{ cursor: dragRef.current ? 'ns-resize' : 'default' }}
+        onMouseLeave={() => { handleSVGMouseUp(); setDrawPreview(null); }}
+        onClick={drawMode ? handleSVGClick : undefined}
+        onContextMenu={handleContextMenu}
+        style={{ cursor: drawMode ? 'crosshair' : (dragRef.current ? 'ns-resize' : 'default') }}
       >
         <SvgDefs />
         <rect x={vbX} y={0} width={vbW} height={mg} fill="rgba(104,148,106,0.2)" />
@@ -958,7 +1072,7 @@ function ElevationView({
             key={panel.panelIndex}
             points={panel.corners.map(c => { const [sx, sy] = toSVG(c.x, c.y, c.z); return `${sx},${sy}`; }).join(' ')}
             fill={pFill} stroke={pStroke} strokeWidth="0.045"
-            style={{ cursor: canDrag ? 'ns-resize' : 'default' }}
+            style={{ cursor: canDrag && !drawMode ? 'ns-resize' : 'default' }}
             onMouseDown={handlePanelMouseDown}
           />
         ))}
@@ -971,8 +1085,23 @@ function ElevationView({
             {(config as PanelConfig).tiltAngle}° 傾斜
           </text>
         )}
+        {/* カスタム描画線 */}
+        {currentViewLines.map(line => (
+          <line key={line.id}
+            x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
+            stroke={line.color} strokeWidth={line.width} strokeLinecap="round" />
+        ))}
+        {/* 描画プレビュー */}
+        {drawMode && drawStart && drawPreview && (
+          <line x1={drawStart[0]} y1={drawStart[1]} x2={drawPreview[0]} y2={drawPreview[1]}
+            stroke={drawColor} strokeWidth={drawWidth} strokeLinecap="round"
+            strokeDasharray="0.18,0.09" opacity={0.75} />
+        )}
+        {drawMode && drawStart && (
+          <circle cx={drawStart[0]} cy={drawStart[1]} r={0.14} fill={drawColor} opacity={0.85} />
+        )}
       </svg>
-      {qsPos && onChange && installationType === 'pergola' && (
+      {qsPos && onChange && installationType === 'pergola' && !drawMode && (
         <QuickSettings
           installation={installation}
           x={qsPos.x} y={qsPos.y}
@@ -986,7 +1115,17 @@ function ElevationView({
 
 // ===== Section View =====
 
-function SectionView({ installation }: { installation: FieldInstallation }) {
+function SectionView({ installation, onChange }: {
+  installation: FieldInstallation;
+  onChange?: (patch: Partial<FieldInstallation>) => void;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawStart, setDrawStart] = useState<[number, number] | null>(null);
+  const [drawPreview, setDrawPreview] = useState<[number, number] | null>(null);
+  const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0]);
+  const [drawWidth, setDrawWidth] = useState(0.10);
+
   const { config, installationType } = installation;
   const az = getAzimuth(installation);
   const fwdE = Math.sin(az * Math.PI / 180);
@@ -1017,6 +1156,68 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
   const toSVG = (x: number, y: number, z: number): [number, number] => [
     fwdE * x + fwdN * y, -z,
   ];
+
+  const canDraw = installationType === 'pergola' && !!onChange;
+  const rackForDraw = installationType === 'pergola'
+    ? (getEffectiveRack(installation) as PergolaRackSpec) : null;
+  const sectionLines: CustomDrawLine[] = rackForDraw?.customLines?.['section'] ?? [];
+
+  useEffect(() => {
+    setDrawStart(null);
+    setDrawPreview(null);
+  }, [installation.id]);
+
+  const getSVGPos = (e: React.MouseEvent): [number, number] | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const sp = pt.matrixTransform(ctm.inverse());
+    return [sp.x, sp.y];
+  };
+
+  const handleSVGClick = (e: React.MouseEvent) => {
+    if (!drawMode || !onChange) return;
+    const pos = getSVGPos(e);
+    if (!pos) return;
+    if (!drawStart) {
+      setDrawStart(pos);
+    } else {
+      const rack = getEffectiveRack(installation) as PergolaRackSpec;
+      const existing = rack.customLines?.['section'] ?? [];
+      const newLine: CustomDrawLine = {
+        id: Date.now().toString(),
+        x1: drawStart[0], y1: drawStart[1],
+        x2: pos[0], y2: pos[1],
+        color: drawColor, width: drawWidth,
+      };
+      onChange({ rackSpec: { ...rack, customLines: { ...(rack.customLines ?? {}), section: [...existing, newLine] } } });
+      setDrawStart(null);
+      setDrawPreview(null);
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (drawMode && drawStart) {
+      e.preventDefault();
+      setDrawStart(null);
+      setDrawPreview(null);
+    }
+  };
+
+  const handleUndoLast = () => {
+    if (!onChange || !rackForDraw) return;
+    const lines = rackForDraw.customLines?.['section'] ?? [];
+    if (lines.length === 0) return;
+    onChange({ rackSpec: { ...rackForDraw, customLines: { ...(rackForDraw.customLines ?? {}), section: lines.slice(0, -1) } } });
+  };
+
+  const handleClearLines = () => {
+    if (!onChange || !rackForDraw) return;
+    onChange({ rackSpec: { ...rackForDraw, customLines: { ...(rackForDraw.customLines ?? {}), section: [] } } });
+  };
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = 0;
   // Use all panels for bbox (rack spans full width)
@@ -1067,8 +1268,45 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
         <span className="dv-label">断面図（側面）</span>
         <span>{installation.name}</span>
         <span>有効傾斜 {effTilt}° ／ 設置高さ {mountH.toFixed(1)} m</span>
+        {drawMode && (
+          <span className="dv-note" style={{ color: '#e07010' }}>
+            {drawStart ? 'クリックで終点を指定（右クリック:キャンセル）' : 'クリックで始点を指定'}
+          </span>
+        )}
+        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto', alignItems: 'center' }}>
+          {canDraw && (
+            <button
+              className={`dv-dir-btn${drawMode ? ' active' : ''}`}
+              onClick={() => { setDrawMode(m => !m); setDrawStart(null); setDrawPreview(null); }}
+            >{drawMode ? '✓ 描画終了' : '✏ 線を描く'}</button>
+          )}
+          {drawMode && (
+            <>
+              {DRAW_COLORS.map(c => (
+                <div key={c} onClick={() => setDrawColor(c)}
+                  style={{ width: 17, height: 17, background: c, border: drawColor === c ? '2.5px solid #fff' : '1px solid #aaa', borderRadius: 3, cursor: 'pointer', flexShrink: 0, outline: drawColor === c ? '1.5px solid #555' : 'none' }} />
+              ))}
+              <select style={{ fontSize: 10.5, padding: '2px 3px', border: '1px solid #ccc', borderRadius: 3 }}
+                value={drawWidth} onChange={e => setDrawWidth(+e.target.value)}>
+                <option value={0.05}>細</option>
+                <option value={0.10}>中</option>
+                <option value={0.16}>太</option>
+              </select>
+              {sectionLines.length > 0 && <>
+                <button className="dv-dir-btn" title="最後の線を取消" onClick={handleUndoLast}>↩</button>
+                <button className="dv-dir-btn" title="断面図の線を全削除" onClick={handleClearLines}>🗑</button>
+              </>}
+            </>
+          )}
+        </div>
       </div>
-      <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
+      <svg ref={svgRef} viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet"
+        onMouseMove={drawMode && drawStart ? e => setDrawPreview(getSVGPos(e)) : undefined}
+        onMouseLeave={() => setDrawPreview(null)}
+        onClick={drawMode ? handleSVGClick : undefined}
+        onContextMenu={handleContextMenu}
+        style={{ cursor: drawMode ? 'crosshair' : 'default' }}
+      >
         <SvgDefs />
         {installationType === 'slope' ? (() => {
           const slopeRad = slopeAngle * Math.PI / 180;
@@ -1130,6 +1368,20 @@ function SectionView({ installation }: { installation: FieldInstallation }) {
           offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`} />
         <DimLine x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
           offset={1.3} label={`${(-svgYMin).toFixed(2)} m`} />
+        {/* カスタム描画線（断面図） */}
+        {sectionLines.map(line => (
+          <line key={line.id}
+            x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
+            stroke={line.color} strokeWidth={line.width} strokeLinecap="round" />
+        ))}
+        {drawMode && drawStart && drawPreview && (
+          <line x1={drawStart[0]} y1={drawStart[1]} x2={drawPreview[0]} y2={drawPreview[1]}
+            stroke={drawColor} strokeWidth={drawWidth} strokeLinecap="round"
+            strokeDasharray="0.18,0.09" opacity={0.75} />
+        )}
+        {drawMode && drawStart && (
+          <circle cx={drawStart[0]} cy={drawStart[1]} r={0.14} fill={drawColor} opacity={0.85} />
+        )}
       </svg>
     </div>
   );
@@ -1332,6 +1584,9 @@ function PergolaRackSection({
       <DVNumInput label="断面幅 W" value={rackSpec.tatesanW} onChange={v => upd({ tatesanW: v })} unit="mm" min={20} max={150} step={5} />
       <DVNumInput label="肉厚" value={rackSpec.tatesanT} onChange={v => upd({ tatesanT: v })} unit="mm" min={1.5} max={6} step={0.1} />
       <DVNumInput label="1スパン本数" value={rackSpec.tatesanPerSpan} onChange={v => upd({ tatesanPerSpan: Math.max(1, Math.round(v)) })} unit="本" min={1} max={6} step={1} />
+      <DVNumInput label="高さ位置" value={rackSpec.tatesanZRatio ?? 0.5}
+        onChange={v => upd({ tatesanZRatio: Math.min(1, Math.max(0, Math.round(v * 100) / 100)) })}
+        unit="(0=根元 1=頂部)" min={0} max={1} step={0.05} />
 
       <div className="dv-section-title">🟤 斜材 (Bracing)</div>
       <DVToggle label="斜材" value={rackSpec.hasBrace} onChange={v => upd({ hasBrace: v })} />
@@ -1364,6 +1619,25 @@ function PergolaRackSection({
         onChange={v => upd({ foundationType: v as PergolaRackSpec['foundationType'] })}
       />
       <DVNumInput label="基礎深さ" value={rackSpec.foundationDepthM} onChange={v => upd({ foundationDepthM: v })} unit="m" min={0.5} max={5} step={0.1} />
+
+      <div className="dv-section-title">✏ カスタム描画</div>
+      <div className="dv-calc-box" style={{ gap: 4 }}>
+        {Object.entries(rackSpec.customLines ?? {}).some(([, lines]) => lines.length > 0) ? (
+          Object.entries(rackSpec.customLines ?? {}).map(([view, lines]) =>
+            lines.length > 0 ? (
+              <div key={view} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{VIEW_LABELS[view] ?? view}: <strong>{lines.length}本</strong></span>
+                <button
+                  onClick={() => upd({ customLines: { ...(rackSpec.customLines ?? {}), [view]: [] } })}
+                  style={{ fontSize: 10, padding: '1px 7px', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer', background: '#fff' }}
+                >削除</button>
+              </div>
+            ) : null
+          )
+        ) : (
+          <span style={{ color: '#9ca3af', fontSize: 10.5 }}>描画なし（立面図・断面図で「✏ 線を描く」）</span>
+        )}
+      </div>
     </>
   );
 }
@@ -1663,7 +1937,7 @@ export default function DrawingView({ installations, activeId, onInstallationCha
               )}
               {tab === 'plan' && <PlanView installation={installation} />}
               {tab === 'elevation' && <ElevationView installation={installation} onChange={handleChange} />}
-              {tab === 'section' && <SectionView installation={installation} />}
+              {tab === 'section' && <SectionView installation={installation} onChange={handleChange} />}
             </div>
           </div>
           <EditPanel installation={installation} onChange={handleChange} />
