@@ -219,26 +219,26 @@ function addPergolaStructure(
   const yGrid: number[] = [];
   for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
 
-  // さざ波式 標準架台: 中央支柱 + 左右斜材が三角形を形成し上部横梁を支持
-  // 中央支柱はmountHeightより低く、斜材がEW方向左右上方へ伸びてヨコサンと接合
-  const H_col    = mountHeight * 0.65;  // 中央支柱高さ（上部梁より低い）
-  const ewSpread = ewSpacing * 0.50;    // 斜材EW方向展開幅（半スパン）
+  // さざ波式 標準架台: NSバイ中間に支柱、前後ヨコサンへ斜材（右側面図でV字三角形）
+  const H_col = mountHeight * 0.65; // 支柱頭頂高さ（ヨコサンより低い）
   const brMat = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 斜材: brown
 
-  // ===== 中央垂直支柱 + 左右斜材（全グリッド交点に設置）=====
+  // ===== 支柱 + 斜材（NSバイごと × EW列ごとに設置）=====
+  // 支柱はNSバイ中間（yGrid[j]とyGrid[j+1]の中点）、斜材が前後ヨコサンへ伸びる
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
   for (const gx of xGrid) {
-    for (const gy of yGrid) {
-      const base     = pt(gx, gy, 0);
-      const postTop  = pt(gx, gy, H_col);
-      const leftTop  = pt(gx - ewSpread, gy, mountHeight); // 左斜材の上端（EW左方向）
-      const rightTop = pt(gx + ewSpread, gy, mountHeight); // 右斜材の上端（EW右方向）
+    for (let j = 0; j < rowsNS; j++) {
+      const gyMid    = (yGrid[j] + yGrid[j + 1]) / 2;  // NSバイ中間位置
+      const base     = pt(gx, gyMid, 0);
+      const postTop  = pt(gx, gyMid, H_col);
+      const frontTop = pt(gx, yGrid[j],     mountHeight); // 前方（南側）ヨコサン接合
+      const backTop  = pt(gx, yGrid[j + 1], mountHeight); // 後方（北側）ヨコサン接合
 
-      // 中央垂直支柱
+      // 中央垂直支柱（地面 → 支柱頭頂）
       addCylinder(scene, base, postTop, postR, postMat);
-      // 左右斜材（支柱頭頂から左右上方へ → 三角形でヨコサンを支持）
-      addCylinder(scene, postTop, leftTop,  postR * 0.75, brMat);
-      addCylinder(scene, postTop, rightTop, postR * 0.75, brMat);
+      // 斜材（支柱頭頂 → 前後ヨコサン: V字形）
+      addCylinder(scene, postTop, frontTop, postR * 0.75, brMat);
+      addCylinder(scene, postTop, backTop,  postR * 0.75, brMat);
 
       // ベースプレート（柱足元のみ）
       const plate = new THREE.Mesh(plateGeo, plateMat);
@@ -668,20 +668,20 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   const els: React.ReactElement[] = [];
   let k = 0;
 
-  // 中央垂直支柱 + 左右斜材（三角形で上部横梁を支持）
-  const H_col    = mountHeight * 0.65; // 中央支柱高さ
-  const ewSpread = ewSpacing * 0.50;   // 斜材EW方向展開幅
+  // 支柱（NSバイ中間）+ 斜材（前後ヨコサンへ: 右側面図でV字三角形）
+  const H_col = mountHeight * 0.65;
   for (const gx of xGrid) {
-    for (const gy of yGrid) {
-      // 中央垂直支柱（地面 → 支柱頭部）
-      const [x0, y0]   = sv(gx, gy, 0);
-      const [ptx, pty] = sv(gx, gy, H_col);
+    for (let j = 0; j < rowsNS; j++) {
+      const gyMid = (yGrid[j] + yGrid[j + 1]) / 2;
+      // 中央垂直支柱
+      const [x0, y0]   = sv(gx, gyMid, 0);
+      const [ptx, pty] = sv(gx, gyMid, H_col);
       els.push(<line key={k++} x1={x0} y1={y0} x2={ptx} y2={pty} stroke="#2b7dc7" strokeWidth="0.10" />);
-      // 左右斜材（支柱頭部 → EW左右上方のヨコサン接合点）
-      const [lx, ly] = sv(gx - ewSpread, gy, mountHeight);
-      const [rx, ry] = sv(gx + ewSpread, gy, mountHeight);
-      els.push(<line key={k++} x1={ptx} y1={pty} x2={lx} y2={ly} stroke="#8a6a20" strokeWidth="0.08" />);
-      els.push(<line key={k++} x1={ptx} y1={pty} x2={rx} y2={ry} stroke="#8a6a20" strokeWidth="0.08" />);
+      // 斜材（支柱頭頂 → 前方ヨコサン / 後方ヨコサン）
+      const [fx, fy] = sv(gx, yGrid[j],     mountHeight);
+      const [bx, by] = sv(gx, yGrid[j + 1], mountHeight);
+      els.push(<line key={k++} x1={ptx} y1={pty} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
+      els.push(<line key={k++} x1={ptx} y1={pty} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
     }
   }
   // ヨコサン — at every NS grid line (EW direction)
@@ -710,21 +710,24 @@ function pergolaRackBBox(
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
   let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
   const topZ = mountHeight + rack.yokosanH / 1000 + rack.tatesanH / 1000;
-  // 斜材のEW方向展開幅を含めてbboxを計算
-  const ewSpread = ewSpacing * 0.50;
   for (let i = 0; i <= colsEW; i++) {
     const ex = (i - colsEW / 2) * ewSpacing;
+    // ヨコサン / タテサン端点（yGrid位置）
     for (let j = 0; j <= rowsNS; j++) {
       const en = (j - rowsNS / 2) * nsSpacing;
-      // 中央支柱位置 + 左右斜材上端（EW方向オフセット）を含める
-      for (const exOff of [0, -ewSpread, +ewSpread]) {
-        const rx = (ex + exOff) * cosr + en * sinr;
-        const ry = -(ex + exOff) * sinr + en * cosr;
-        for (const ez of [0, topZ]) {
-          const [sx, sy] = toSVG(rx, ry, ez);
-          xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
-          yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
-        }
+      const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
+      for (const ez of [0, topZ]) {
+        const [sx, sy] = toSVG(rx, ry, ez);
+        xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
+        yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
+      }
+      // 支柱基部（NSバイ中間位置）
+      if (j < rowsNS) {
+        const enMid = (j + 0.5 - rowsNS / 2) * nsSpacing;
+        const rxM = ex * cosr + enMid * sinr, ryM = -ex * sinr + enMid * cosr;
+        const [sxM, syM] = toSVG(rxM, ryM, 0);
+        xMin = Math.min(xMin, sxM); xMax = Math.max(xMax, sxM);
+        yMin = Math.min(yMin, syM); yMax = Math.max(yMax, syM);
       }
     }
   }
