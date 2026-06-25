@@ -375,6 +375,66 @@
 .dv-dir-btn:hover { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
 .dv-dir-btn.active { background: #2563eb; color: #fff; border-color: #1d4ed8; }
 
+/* ===== Quick Settings Popup ===== */
+.qs-panel {
+  position: fixed;
+  z-index: 3500;
+  background: #fff;
+  border: 1.5px solid #c7d4e8;
+  border-radius: 10px;
+  box-shadow: 0 6px 28px rgba(0,0,0,0.18);
+  min-width: 230px;
+  max-height: 80vh;
+  overflow-y: auto;
+  font-size: 11.5px;
+}
+.qs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: linear-gradient(135deg, #1a3a5c 0%, #1e5faa 100%);
+  color: #fff;
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+.qs-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.75);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.qs-close:hover { color: #fff; }
+.qs-body { padding: 4px 0 8px; }
+.qs-section {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 10px 3px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fafbfc;
+  margin-top: 4px;
+}
+.qs-calc {
+  margin: 6px 10px 2px;
+  padding: 5px 8px;
+  background: #f0f7ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 5px;
+  font-size: 10.5px;
+  color: #374151;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qs-calc strong { color: #1d4ed8; }
+
 /* ===== Print ===== */
 @media print {
   .drawing-modal { position: static; background: none; }

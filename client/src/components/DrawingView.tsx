@@ -220,37 +220,35 @@ function addPergolaStructure(
   const yGrid: number[] = [];
   for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
 
-  // さざ波式: yGrid境界位置に支柱（ヨコサンの真下）、隣接ヨコサンへ斜材
-  // 端の支柱は内側への斜材1本のみ
-  const brMat  = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 斜材: brown
-  const tsZ    = mountHeight + ysH + tsH / 2;   // タテサン中心高さ
-  const attachY = rack.braceAttachY ?? 0.65;    // 支柱取付高さ比率（Y）
-  const reachX  = rack.braceReachX  ?? 1.0;     // NS方向伸び比率（X）
+  // さざ波式: yGrid境界位置に支柱（ヨコサン直下）、隣接タテサンへ斜材
+  // 架台Z位置: ヨコサン・タテサンはパネル（mountHeight）の下に配置
+  const postTopZ   = mountHeight - ysH - tsH;           // 支柱頂部 = ヨコサン底
+  const yokosanZ   = postTopZ + ysH / 2;                // ヨコサン中心
+  const tatesanZ   = postTopZ + ysH + tsH / 2;          // タテサン中心（= mountHeight - tsH/2）
+  const brMat      = new THREE.MeshLambertMaterial({ color: 0x8a6a20 });
+  const attachY    = rack.braceAttachY ?? 0.65;
+  const reachX     = rack.braceReachX  ?? 1.0;
 
-  // ===== 支柱 + 斜材（yGridごと × EW列ごとに設置）=====
+  // ===== 支柱 + 斜材（yGridごと × EW列ごと）=====
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
   for (const gx of xGrid) {
     for (let j = 0; j <= rowsNS; j++) {
       const gy         = yGrid[j];
       const base       = pt(gx, gy, 0);
-      const postTop    = pt(gx, gy, mountHeight);           // 支柱頂部 = ヨコサン底
-      const braceStart = pt(gx, gy, mountHeight * attachY); // 斜材取付位置（Y）
+      const postTop    = pt(gx, gy, postTopZ);
+      const braceStart = pt(gx, gy, postTopZ * attachY);
 
-      // 垂直支柱（地面 → ヨコサン底）
       addCylinder(scene, base, postTop, postR, postMat);
 
-      // 前方斜材（j > 0 のみ: 一つ前のヨコサン/タテサンへ）
       if (j > 0) {
         const nsReach = (yGrid[j] - yGrid[j - 1]) * reachX;
-        addCylinder(scene, braceStart, pt(gx, gy - nsReach, tsZ), postR * 0.75, brMat);
+        addCylinder(scene, braceStart, pt(gx, gy - nsReach, tatesanZ), postR * 0.75, brMat);
       }
-      // 後方斜材（j < rowsNS のみ: 一つ後のヨコサン/タテサンへ）
       if (j < rowsNS) {
         const nsReach = (yGrid[j + 1] - yGrid[j]) * reachX;
-        addCylinder(scene, braceStart, pt(gx, gy + nsReach, tsZ), postR * 0.75, brMat);
+        addCylinder(scene, braceStart, pt(gx, gy + nsReach, tatesanZ), postR * 0.75, brMat);
       }
 
-      // ベースプレート
       const plate = new THREE.Mesh(plateGeo, plateMat);
       plate.position.set(base.x, bpt / 2, base.z);
       plate.rotation.y = -rotRad;
@@ -258,20 +256,20 @@ function addPergolaStructure(
     }
   }
 
-  // ===== ヨコサン (EW cross beams at every NS grid line) =====
+  // ===== ヨコサン（支柱頂部に直乗り、EW方向）=====
   for (const gy of yGrid) {
-    const p1 = pt(xGrid[0], gy, mountHeight + ysH / 2);
-    const p2 = pt(xGrid[xGrid.length - 1], gy, mountHeight + ysH / 2);
+    const p1 = pt(xGrid[0], gy, yokosanZ);
+    const p2 = pt(xGrid[xGrid.length - 1], gy, yokosanZ);
     addCylinder(scene, p1, p2, ysH / 2, ykMat);
   }
 
-  // ===== タテサン (NS purlins spanning full depth, evenly distributed in EW) =====
+  // ===== タテサン（ヨコサン上、NS方向）=====
   const ewTotal = xGrid[xGrid.length - 1] - xGrid[0];
   const tCount  = Math.max(1, colsEW * rack.tatesanPerSpan);
   for (let i = 0; i < tCount; i++) {
     const gx = xGrid[0] + (i + 0.5) / tCount * ewTotal;
-    const p1 = pt(gx, yGrid[0], mountHeight + ysH + tsH / 2);
-    const p2 = pt(gx, yGrid[yGrid.length - 1], mountHeight + ysH + tsH / 2);
+    const p1 = pt(gx, yGrid[0], tatesanZ);
+    const p2 = pt(gx, yGrid[yGrid.length - 1], tatesanZ);
     addCylinder(scene, p1, p2, tsW / 2, tsMat);
   }
 
@@ -678,44 +676,43 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   const els: React.ReactElement[] = [];
   let k = 0;
 
-  // 支柱（yGrid境界、ヨコサン直下）+ 斜材（隣接タテサンへ、端は片方のみ）
-  const tsZ     = mountHeight + ysH + tsH / 2;
-  const attachY = rack.braceAttachY ?? 0.65;
-  const reachX  = rack.braceReachX  ?? 1.0;
+  // 架台Z位置: パネル（mountHeight）の下にヨコサン・タテサンを配置
+  const postTopZ_s = mountHeight - ysH - tsH;
+  const yokosanZ_s = postTopZ_s + ysH / 2;
+  const tatesanZ_s = postTopZ_s + ysH + tsH / 2;
+  const attachY    = rack.braceAttachY ?? 0.65;
+  const reachX     = rack.braceReachX  ?? 1.0;
   for (const gx of xGrid) {
     for (let j = 0; j <= rowsNS; j++) {
       const gy = yGrid[j];
-      // 垂直支柱（地面 → ヨコサン底）
+      // 垂直支柱（地面 → 支柱頂部）
       const [x0, y0]   = sv(gx, gy, 0);
-      const [ptx, pty] = sv(gx, gy, mountHeight);
+      const [ptx, pty] = sv(gx, gy, postTopZ_s);
       els.push(<line key={k++} x1={x0} y1={y0} x2={ptx} y2={pty} stroke="#2b7dc7" strokeWidth="0.10" />);
-      // 斜材取付点
-      const [bsx, bsy] = sv(gx, gy, mountHeight * attachY);
-      // 前方斜材（j > 0 のみ）
+      const [bsx, bsy] = sv(gx, gy, postTopZ_s * attachY);
       if (j > 0) {
         const nsReach = (yGrid[j] - yGrid[j - 1]) * reachX;
-        const [fx, fy] = sv(gx, gy - nsReach, tsZ);
+        const [fx, fy] = sv(gx, gy - nsReach, tatesanZ_s);
         els.push(<line key={k++} x1={bsx} y1={bsy} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
       }
-      // 後方斜材（j < rowsNS のみ）
       if (j < rowsNS) {
         const nsReach = (yGrid[j + 1] - yGrid[j]) * reachX;
-        const [bx, by] = sv(gx, gy + nsReach, tsZ);
+        const [bx, by] = sv(gx, gy + nsReach, tatesanZ_s);
         els.push(<line key={k++} x1={bsx} y1={bsy} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
       }
     }
   }
-  // ヨコサン — at every NS grid line (EW direction)
+  // ヨコサン（支柱頂部、EW方向）
   for (const gy of yGrid) {
-    const [x0, y0] = sv(xGrid[0], gy, mountHeight + ysH / 2);
-    const [x1, y1] = sv(xGrid[xGrid.length - 1], gy, mountHeight + ysH / 2);
+    const [x0, y0] = sv(xGrid[0], gy, yokosanZ_s);
+    const [x1, y1] = sv(xGrid[xGrid.length - 1], gy, yokosanZ_s);
     els.push(<line key={k++} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#cc44aa" strokeWidth="0.10" />);
   }
-  // タテサン — NS purlins
+  // タテサン（ヨコサン上、NS方向）
   for (let i = 0; i < tCount; i++) {
     const gx = xGrid[0] + (i + 0.5) / tCount * ewTotal;
-    const [x0, y0] = sv(gx, yGrid[0], mountHeight + ysH + tsH / 2);
-    const [x1, y1] = sv(gx, yGrid[yGrid.length - 1], mountHeight + ysH + tsH / 2);
+    const [x0, y0] = sv(gx, yGrid[0], tatesanZ_s);
+    const [x1, y1] = sv(gx, yGrid[yGrid.length - 1], tatesanZ_s);
     els.push(<line key={k++} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#22aa33" strokeWidth="0.07" />);
   }
   return <>{els}</>;
@@ -730,19 +727,19 @@ function pergolaRackBBox(
   const rotRad = rackRotation * Math.PI / 180;
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
   let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-  const topZ = mountHeight + rack.yokosanH / 1000 + rack.tatesanH / 1000;
+  const ysH   = rack.yokosanH / 1000;
+  const tsH   = rack.tatesanH / 1000;
+  // 架台はmountHeight以下（支柱は地面から、上端はパネル高さ mountHeight）
   for (let i = 0; i <= colsEW; i++) {
     const ex = (i - colsEW / 2) * ewSpacing;
-    // ヨコサン / タテサン端点（yGrid位置）
     for (let j = 0; j <= rowsNS; j++) {
       const en = (j - rowsNS / 2) * nsSpacing;
       const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
-      for (const ez of [0, topZ]) {
+      for (const ez of [0, mountHeight, mountHeight - ysH - tsH]) {
         const [sx, sy] = toSVG(rx, ry, ez);
         xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
         yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
       }
-      // 斜材先端（タテサン高さ、yGridと同じNS位置なのでbboxは既に含まれている）
     }
   }
   return { xMin, xMax, yMin, yMax };
@@ -758,16 +755,73 @@ const ELEV_DIRS: { key: ElevDir; label: string }[] = [
   { key: 'left',  label: '左側面' },
 ];
 
-function ElevationView({ installation }: { installation: FieldInstallation }) {
+// ===== Quick Settings Popup (立面図クリック時) =====
+
+function QuickSettings({
+  installation, x, y, onClose, onChange,
+}: {
+  installation: FieldInstallation;
+  x: number; y: number;
+  onClose: () => void;
+  onChange: (patch: Partial<FieldInstallation>) => void;
+}) {
+  const cfg = installation.config as PanelConfig;
+  const rack = getEffectiveRack(installation) as PergolaRackSpec;
+  const upd = (patch: Partial<PanelConfig>) =>
+    onChange({ config: { ...cfg, ...patch } as AnyConfig });
+  const updR = (patch: Partial<PergolaRackSpec>) =>
+    onChange({ rackSpec: { ...rack, ...patch } });
+
+  const left = Math.min(x + 12, window.innerWidth - 260);
+  const top  = Math.min(y - 10, window.innerHeight - 400);
+
+  return (
+    <div className="qs-panel" style={{ left, top }} onMouseDown={e => e.stopPropagation()}>
+      <div className="qs-header">
+        <span>⚡ クイック設定</span>
+        <button className="qs-close" onClick={onClose}>✕</button>
+      </div>
+      <div className="qs-body">
+        <div className="qs-section">パネル高さ・角度</div>
+        <DVNumInput label="設置高さ Z" value={cfg.mountHeight} onChange={v => upd({ mountHeight: v })} unit="m" min={0.5} max={15} step={0.1} />
+        <DVNumInput label="傾斜角" value={cfg.tiltAngle} onChange={v => upd({ tiltAngle: v })} unit="°" min={0} max={60} step={1} />
+        <DVNumInput label="方位角" value={cfg.facingAzimuth} onChange={v => upd({ facingAzimuth: v })} unit="°" min={0} max={360} step={1} />
+        <div className="qs-section">パネル配置 XY</div>
+        <DVNumInput label="EW間隔 X" value={cfg.ewSpacing} onChange={v => upd({ ewSpacing: v })} unit="m" min={0.5} max={10} step={0.05} />
+        <DVNumInput label="NS間隔 Y" value={cfg.nsSpacing} onChange={v => upd({ nsSpacing: v })} unit="m" min={0.5} max={15} step={0.05} />
+        <DVNumInput label="EW列数" value={cfg.colsEW} onChange={v => upd({ colsEW: Math.max(1, Math.round(v)) })} unit="列" min={1} max={30} step={1} />
+        <DVNumInput label="NS行数" value={cfg.rowsNS} onChange={v => upd({ rowsNS: Math.max(1, Math.round(v)) })} unit="行" min={1} max={30} step={1} />
+        <div className="qs-section">架台（斜材）</div>
+        <DVNumInput label="斜材Y（高さ）" value={rack.braceAttachY ?? 0.65} onChange={v => updR({ braceAttachY: Math.min(1, Math.max(0, v)) })} unit="" min={0} max={1} step={0.05} />
+        <DVNumInput label="斜材X（NS比）" value={rack.braceReachX ?? 1.0} onChange={v => updR({ braceReachX: Math.min(1, Math.max(0, v)) })} unit="" min={0} max={1} step={0.05} />
+        <div className="qs-calc">
+          高さ <strong>{cfg.mountHeight.toFixed(2)} m</strong>
+          傾斜 <strong>{cfg.tiltAngle}°</strong>
+          {cfg.colsEW}×{cfg.rowsNS}枚
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Elevation View =====
+
+function ElevationView({
+  installation, onChange,
+}: {
+  installation: FieldInstallation;
+  onChange?: (patch: Partial<FieldInstallation>) => void;
+}) {
   const [dir, setDir] = useState<ElevDir>('front');
+  const [qsPos, setQsPos] = useState<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<{ startY: number; startMH: number } | null>(null);
+
   const { config, installationType } = installation;
   const az = getAzimuth(installation);
   const fwdE = Math.sin(az * Math.PI / 180);
   const fwdN = Math.cos(az * Math.PI / 180);
 
-  // Panel-frame relative projections
-  // front: looking from the facing direction (正面 = face side of panels)
-  // right/left: when standing in front and facing the panels
   const toSVG = (x: number, y: number, z: number): [number, number] => {
     switch (dir) {
       case 'front': return [-fwdN * x + fwdE * y, -z];
@@ -789,7 +843,6 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
       svgYMin = Math.min(svgYMin, sy); svgYMax = Math.max(svgYMax, sy);
     }
   }
-  // Expand bbox to include full rack structure
   if (installationType === 'pergola') {
     const rb = pergolaRackBBox(config as PanelConfig, getEffectiveRack(installation) as PergolaRackSpec, toSVG);
     svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
@@ -803,32 +856,67 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
   const mountH = installationType === 'pergola'
     ? (config as PanelConfig).mountHeight
     : (config as SlopeConfig).baseMountHeight;
-  const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.55)' : 'rgba(213,94,10,0.55)';
-  const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
+  const pFill    = installationType === 'pergola' ? 'rgba(29,78,216,0.55)' : 'rgba(213,94,10,0.55)';
+  const pStroke  = installationType === 'pergola' ? '#1e40af' : '#b45309';
+  const canDrag  = installationType === 'pergola' && !!onChange;
+
+  // SVG pixel → SVG unit 変換スケール
+  const getSVGScaleY = (): number => {
+    const el = svgRef.current;
+    if (!el) return 1;
+    const rect = el.getBoundingClientRect();
+    return rect.height > 0 ? vbH / rect.height : 1;
+  };
+
+  const handlePanelMouseDown = (e: React.MouseEvent) => {
+    if (!canDrag) return;
+    e.preventDefault();
+    dragRef.current = { startY: e.clientY, startMH: (config as PanelConfig).mountHeight };
+    setQsPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleSVGMouseMove = (e: React.MouseEvent) => {
+    if (!dragRef.current || !onChange) return;
+    const dy    = e.clientY - dragRef.current.startY;
+    const scale = getSVGScaleY();
+    const dMH   = -dy * scale;  // SVG Y は -z なので符号反転
+    const newMH = Math.max(0.5, Math.min(15, dragRef.current.startMH + dMH));
+    onChange({ config: { ...(config as PanelConfig), mountHeight: Math.round(newMH * 100) / 100 } as AnyConfig });
+  };
+
+  const handleSVGMouseUp = () => {
+    dragRef.current = null;
+  };
 
   const dirTitles: Record<ElevDir, string> = {
-    front: `正面図（パネル前面 ${azLabel(az)}向き）`,
-    back: `背面図（パネル背面側）`,
+    front: `正面図（${azLabel(az)}向き）`,
+    back:  `背面図`,
     right: `右側面図`,
-    left: `左側面図`,
+    left:  `左側面図`,
   };
 
   return (
-    <div className="svg-drawing-wrap">
+    <div className="svg-drawing-wrap" style={{ position: 'relative' }}>
       <div className="drawing-info-bar">
         <span className="dv-label">{dirTitles[dir]}</span>
-        <span>方位 {az}° ／ 設置高さ {mountH.toFixed(1)} m</span>
+        <span>設置高さ <strong>{mountH.toFixed(2)} m</strong></span>
+        {canDrag && <span className="dv-note">パネルをドラッグ→高さ変更　クリック→設定パネル</span>}
         <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
           {ELEV_DIRS.map(d => (
-            <button
-              key={d.key}
-              className={`dv-dir-btn${dir === d.key ? ' active' : ''}`}
-              onClick={() => setDir(d.key)}
-            >{d.label}</button>
+            <button key={d.key} className={`dv-dir-btn${dir === d.key ? ' active' : ''}`}
+              onClick={() => setDir(d.key)}>{d.label}</button>
           ))}
         </div>
       </div>
-      <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
+      <svg ref={svgRef}
+        viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+        className="drawing-svg"
+        preserveAspectRatio="xMidYMid meet"
+        onMouseMove={handleSVGMouseMove}
+        onMouseUp={handleSVGMouseUp}
+        onMouseLeave={handleSVGMouseUp}
+        style={{ cursor: dragRef.current ? 'ns-resize' : 'default' }}
+      >
         <SvgDefs />
         <rect x={vbX} y={0} width={vbW} height={mg} fill="rgba(104,148,106,0.2)" />
         <line x1={vbX} y1={0} x2={vbX + vbW} y2={0} stroke="#68946a" strokeWidth="0.08" />
@@ -848,9 +936,13 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
             label={`基礎 ${mountH.toFixed(2)} m`} color="#c53030" />
         )}
         {panels.map(panel => (
-          <polygon key={panel.panelIndex}
+          <polygon
+            key={panel.panelIndex}
             points={panel.corners.map(c => { const [sx, sy] = toSVG(c.x, c.y, c.z); return `${sx},${sy}`; }).join(' ')}
-            fill={pFill} stroke={pStroke} strokeWidth="0.045" />
+            fill={pFill} stroke={pStroke} strokeWidth="0.045"
+            style={{ cursor: canDrag ? 'ns-resize' : 'default' }}
+            onMouseDown={handlePanelMouseDown}
+          />
         ))}
         <DimLine x1={svgXMin} y1={svgYMin - 0.3} x2={svgXMax} y2={svgYMin - 0.3}
           offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`} />
@@ -862,6 +954,14 @@ function ElevationView({ installation }: { installation: FieldInstallation }) {
           </text>
         )}
       </svg>
+      {qsPos && onChange && installationType === 'pergola' && (
+        <QuickSettings
+          installation={installation}
+          x={qsPos.x} y={qsPos.y}
+          onClose={() => setQsPos(null)}
+          onChange={onChange}
+        />
+      )}
     </div>
   );
 }
@@ -1534,7 +1634,7 @@ export default function DrawingView({ installations, activeId, onInstallationCha
                 </div>
               )}
               {tab === 'plan' && <PlanView installation={installation} />}
-              {tab === 'elevation' && <ElevationView installation={installation} />}
+              {tab === 'elevation' && <ElevationView installation={installation} onChange={handleChange} />}
               {tab === 'section' && <SectionView installation={installation} />}
             </div>
           </div>
