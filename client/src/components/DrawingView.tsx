@@ -214,25 +214,29 @@ function addPergolaStructure(
   const tsH   = rack.tatesanH / 1000;
   const tsW   = rack.tatesanW / 1000;
 
-  // Grid lines: (colsEW+1) in EW direction, (rowsNS+1) in NS direction
-  const xGrid: number[] = [];
-  for (let i = 0; i <= colsEW; i++) xGrid.push((i - colsEW / 2) * ewSpacing);
-  const yGrid: number[] = [];
-  for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
+  // 架台グリッド: パネル配置と独立して設定可能
+  const ewTotal  = colsEW * ewSpacing;
+  const nsTotal  = rowsNS * nsSpacing;
+  const pColsEW  = Math.max(2, rack.postColsEW  ?? (colsEW + 1));
+  const yRowsNS  = Math.max(2, rack.yokosanRowsNS ?? (rowsNS + 1));
 
-  // さざ波式: yGrid境界位置に支柱（ヨコサン直下）、隣接タテサンへ斜材
-  // 架台Z位置: ヨコサン・タテサンはパネル（mountHeight）の下に配置
-  const postTopZ   = mountHeight - ysH - tsH;           // 支柱頂部 = ヨコサン底
-  const yokosanZ   = postTopZ + ysH / 2;                // ヨコサン中心
-  const tatesanZ   = postTopZ + ysH + tsH / 2;          // タテサン中心（= mountHeight - tsH/2）
+  const xGrid: number[] = [];
+  for (let i = 0; i < pColsEW; i++) xGrid.push(-ewTotal / 2 + i * ewTotal / (pColsEW - 1));
+  const yGrid: number[] = [];
+  for (let j = 0; j < yRowsNS; j++) yGrid.push(-nsTotal / 2 + j * nsTotal / (yRowsNS - 1));
+
+  // パネルはヨコサンの上に直接設置
+  const postTopZ   = mountHeight - ysH;           // 支柱頂部 = ヨコサン底面
+  const yokosanZ   = mountHeight - ysH / 2;       // ヨコサン中心（上面 = mountHeight）
+  const tatesanZ   = postTopZ * 0.5;              // タテサン（NS横補強材、支柱中間）
   const brMat      = new THREE.MeshLambertMaterial({ color: 0x8a6a20 });
   const attachY    = rack.braceAttachY ?? 0.65;
   const reachX     = rack.braceReachX  ?? 1.0;
 
-  // ===== 支柱 + 斜材（yGridごと × EW列ごと）=====
+  // ===== 支柱 + 斜材 =====
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
   for (const gx of xGrid) {
-    for (let j = 0; j <= rowsNS; j++) {
+    for (let j = 0; j < yRowsNS; j++) {
       const gy         = yGrid[j];
       const base       = pt(gx, gy, 0);
       const postTop    = pt(gx, gy, postTopZ);
@@ -242,11 +246,11 @@ function addPergolaStructure(
 
       if (j > 0) {
         const nsReach = (yGrid[j] - yGrid[j - 1]) * reachX;
-        addCylinder(scene, braceStart, pt(gx, gy - nsReach, tatesanZ), postR * 0.75, brMat);
+        addCylinder(scene, braceStart, pt(gx, gy - nsReach, yokosanZ), postR * 0.75, brMat);
       }
-      if (j < rowsNS) {
+      if (j < yRowsNS - 1) {
         const nsReach = (yGrid[j + 1] - yGrid[j]) * reachX;
-        addCylinder(scene, braceStart, pt(gx, gy + nsReach, tatesanZ), postR * 0.75, brMat);
+        addCylinder(scene, braceStart, pt(gx, gy + nsReach, yokosanZ), postR * 0.75, brMat);
       }
 
       const plate = new THREE.Mesh(plateGeo, plateMat);
@@ -256,15 +260,14 @@ function addPergolaStructure(
     }
   }
 
-  // ===== ヨコサン（支柱頂部に直乗り、EW方向）=====
+  // ===== ヨコサン（支柱頂部に直乗り、EW方向、パネル直下）=====
   for (const gy of yGrid) {
     const p1 = pt(xGrid[0], gy, yokosanZ);
     const p2 = pt(xGrid[xGrid.length - 1], gy, yokosanZ);
     addCylinder(scene, p1, p2, ysH / 2, ykMat);
   }
 
-  // ===== タテサン（ヨコサン上、NS方向）=====
-  const ewTotal = xGrid[xGrid.length - 1] - xGrid[0];
+  // ===== タテサン（支柱中間部、NS方向補強材）=====
   const tCount  = Math.max(1, colsEW * rack.tatesanPerSpan);
   for (let i = 0; i < tCount; i++) {
     const gx = xGrid[0] + (i + 0.5) / tCount * ewTotal;
@@ -663,52 +666,57 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
     return toSVG(ex * cosr + en * sinr, -ex * sinr + en * cosr, ez);
   };
 
-  const xGrid: number[] = [];
-  for (let i = 0; i <= colsEW; i++) xGrid.push((i - colsEW / 2) * ewSpacing);
-  const yGrid: number[] = [];
-  for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
-
   const ysH = rack.yokosanH / 1000;
   const tsH = rack.tatesanH / 1000;
-  const ewTotal = xGrid[xGrid.length - 1] - xGrid[0];
+
+  // 架台グリッド: パネル配置と独立して設定可能
+  const ewTotal  = colsEW * ewSpacing;
+  const nsTotal  = rowsNS * nsSpacing;
+  const pColsEW  = Math.max(2, rack.postColsEW  ?? (colsEW + 1));
+  const yRowsNS  = Math.max(2, rack.yokosanRowsNS ?? (rowsNS + 1));
+
+  const xGrid: number[] = [];
+  for (let i = 0; i < pColsEW; i++) xGrid.push(-ewTotal / 2 + i * ewTotal / (pColsEW - 1));
+  const yGrid: number[] = [];
+  for (let j = 0; j < yRowsNS; j++) yGrid.push(-nsTotal / 2 + j * nsTotal / (yRowsNS - 1));
+
   const tCount = Math.max(1, colsEW * rack.tatesanPerSpan);
 
   const els: React.ReactElement[] = [];
   let k = 0;
 
-  // 架台Z位置: パネル（mountHeight）の下にヨコサン・タテサンを配置
-  const postTopZ_s = mountHeight - ysH - tsH;
-  const yokosanZ_s = postTopZ_s + ysH / 2;
-  const tatesanZ_s = postTopZ_s + ysH + tsH / 2;
+  // パネルはヨコサンの上に直接設置
+  const postTopZ_s = mountHeight - ysH;           // 支柱頂部 = ヨコサン底面
+  const yokosanZ_s = mountHeight - ysH / 2;       // ヨコサン中心（上面 = mountHeight）
+  const tatesanZ_s = postTopZ_s * 0.5;            // タテサン（NS補強材、支柱中間）
   const attachY    = rack.braceAttachY ?? 0.65;
   const reachX     = rack.braceReachX  ?? 1.0;
   for (const gx of xGrid) {
-    for (let j = 0; j <= rowsNS; j++) {
+    for (let j = 0; j < yRowsNS; j++) {
       const gy = yGrid[j];
-      // 垂直支柱（地面 → 支柱頂部）
       const [x0, y0]   = sv(gx, gy, 0);
       const [ptx, pty] = sv(gx, gy, postTopZ_s);
       els.push(<line key={k++} x1={x0} y1={y0} x2={ptx} y2={pty} stroke="#2b7dc7" strokeWidth="0.10" />);
       const [bsx, bsy] = sv(gx, gy, postTopZ_s * attachY);
       if (j > 0) {
         const nsReach = (yGrid[j] - yGrid[j - 1]) * reachX;
-        const [fx, fy] = sv(gx, gy - nsReach, tatesanZ_s);
+        const [fx, fy] = sv(gx, gy - nsReach, yokosanZ_s);
         els.push(<line key={k++} x1={bsx} y1={bsy} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
       }
-      if (j < rowsNS) {
+      if (j < yRowsNS - 1) {
         const nsReach = (yGrid[j + 1] - yGrid[j]) * reachX;
-        const [bx, by] = sv(gx, gy + nsReach, tatesanZ_s);
+        const [bx, by] = sv(gx, gy + nsReach, yokosanZ_s);
         els.push(<line key={k++} x1={bsx} y1={bsy} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
       }
     }
   }
-  // ヨコサン（支柱頂部、EW方向）
+  // ヨコサン（支柱頂部・パネル直下、EW方向）
   for (const gy of yGrid) {
     const [x0, y0] = sv(xGrid[0], gy, yokosanZ_s);
     const [x1, y1] = sv(xGrid[xGrid.length - 1], gy, yokosanZ_s);
     els.push(<line key={k++} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#cc44aa" strokeWidth="0.10" />);
   }
-  // タテサン（ヨコサン上、NS方向）
+  // タテサン（支柱中間部・NS方向補強材）
   for (let i = 0; i < tCount; i++) {
     const gx = xGrid[0] + (i + 0.5) / tCount * ewTotal;
     const [x0, y0] = sv(gx, yGrid[0], tatesanZ_s);
@@ -727,15 +735,17 @@ function pergolaRackBBox(
   const rotRad = rackRotation * Math.PI / 180;
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
   let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-  const ysH   = rack.yokosanH / 1000;
-  const tsH   = rack.tatesanH / 1000;
-  // 架台はmountHeight以下（支柱は地面から、上端はパネル高さ mountHeight）
-  for (let i = 0; i <= colsEW; i++) {
-    const ex = (i - colsEW / 2) * ewSpacing;
-    for (let j = 0; j <= rowsNS; j++) {
-      const en = (j - rowsNS / 2) * nsSpacing;
+  const ysH  = rack.yokosanH / 1000;
+  const ewTotal  = colsEW * ewSpacing;
+  const nsTotal  = rowsNS * nsSpacing;
+  const pColsEW  = Math.max(2, rack.postColsEW  ?? (colsEW + 1));
+  const yRowsNS  = Math.max(2, rack.yokosanRowsNS ?? (rowsNS + 1));
+  for (let i = 0; i < pColsEW; i++) {
+    const ex = -ewTotal / 2 + i * ewTotal / (pColsEW - 1);
+    for (let j = 0; j < yRowsNS; j++) {
+      const en = -nsTotal / 2 + j * nsTotal / (yRowsNS - 1);
       const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
-      for (const ez of [0, mountHeight, mountHeight - ysH - tsH]) {
+      for (const ez of [0, mountHeight, mountHeight - ysH]) {
         const [sx, sy] = toSVG(rx, ry, ez);
         xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
         yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
@@ -791,13 +801,16 @@ function QuickSettings({
         <DVNumInput label="NS間隔 Y" value={cfg.nsSpacing} onChange={v => upd({ nsSpacing: v })} unit="m" min={0.5} max={15} step={0.05} />
         <DVNumInput label="EW列数" value={cfg.colsEW} onChange={v => upd({ colsEW: Math.max(1, Math.round(v)) })} unit="列" min={1} max={30} step={1} />
         <DVNumInput label="NS行数" value={cfg.rowsNS} onChange={v => upd({ rowsNS: Math.max(1, Math.round(v)) })} unit="行" min={1} max={30} step={1} />
+        <div className="qs-section">架台レイアウト</div>
+        <DVNumInput label="EW支柱列数" value={rack.postColsEW ?? (cfg.colsEW + 1)} onChange={v => updR({ postColsEW: Math.max(2, Math.round(v)) })} unit="列" min={2} max={20} step={1} />
+        <DVNumInput label="NS梁本数" value={rack.yokosanRowsNS ?? (cfg.rowsNS + 1)} onChange={v => updR({ yokosanRowsNS: Math.max(2, Math.round(v)) })} unit="本" min={2} max={30} step={1} />
         <div className="qs-section">架台（斜材）</div>
         <DVNumInput label="斜材Y（高さ）" value={rack.braceAttachY ?? 0.65} onChange={v => updR({ braceAttachY: Math.min(1, Math.max(0, v)) })} unit="" min={0} max={1} step={0.05} />
         <DVNumInput label="斜材X（NS比）" value={rack.braceReachX ?? 1.0} onChange={v => updR({ braceReachX: Math.min(1, Math.max(0, v)) })} unit="" min={0} max={1} step={0.05} />
         <div className="qs-calc">
           高さ <strong>{cfg.mountHeight.toFixed(2)} m</strong>
           傾斜 <strong>{cfg.tiltAngle}°</strong>
-          {cfg.colsEW}×{cfg.rowsNS}枚
+          {cfg.colsEW}×{cfg.rowsNS}枚 ／ 梁{rack.yokosanRowsNS ?? (cfg.rowsNS + 1)}本
         </div>
       </div>
     </div>
@@ -1273,14 +1286,22 @@ function PanelSection({
 // ===== Pergola Rack Section =====
 
 function PergolaRackSection({
-  rackSpec, onChange,
+  rackSpec, onChange, defaultColsEW, defaultRowsNS,
 }: {
   rackSpec: PergolaRackSpec;
   onChange: (r: PergolaRackSpec) => void;
+  defaultColsEW: number;
+  defaultRowsNS: number;
 }) {
   const upd = (patch: Partial<PergolaRackSpec>) => onChange({ ...rackSpec, ...patch });
   return (
     <>
+      <div className="dv-section-title">📐 架台レイアウト</div>
+      <DVNumInput label="EW支柱列数" value={rackSpec.postColsEW ?? defaultColsEW} onChange={v => upd({ postColsEW: Math.max(2, Math.round(v)) })} unit="列" min={2} max={30} step={1} />
+      <DVNumInput label="NS梁本数" value={rackSpec.yokosanRowsNS ?? defaultRowsNS} onChange={v => upd({ yokosanRowsNS: Math.max(2, Math.round(v)) })} unit="本" min={2} max={40} step={1} />
+      <div className="dv-calc-box">
+        <div>支柱: <strong>{rackSpec.postColsEW ?? defaultColsEW}列 × {rackSpec.yokosanRowsNS ?? defaultRowsNS}本</strong></div>
+      </div>
       <div className="dv-section-title">🔵 柱 (Posts)</div>
       <DVNumInput label="外径" value={rackSpec.postDiameterMm} onChange={v => upd({ postDiameterMm: v })} unit="mm" min={48} max={216} step={0.1} />
       <DVNumInput label="肉厚" value={rackSpec.postThicknessMm} onChange={v => upd({ postThicknessMm: v })} unit="mm" min={2} max={12} step={0.1} />
@@ -1457,6 +1478,8 @@ function EditPanel({
           <PergolaRackSection
             rackSpec={rackSpec as PergolaRackSpec}
             onChange={handleRackChange}
+            defaultColsEW={(config as PanelConfig).colsEW + 1}
+            defaultRowsNS={(config as PanelConfig).rowsNS + 1}
           />
         </>
       )}
