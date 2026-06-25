@@ -103,6 +103,8 @@ export interface PergolaRackSpec {
   hasBrace: boolean;
   braceDiameterMm: number;     // 径 mm (e.g., 42.7)
   braceThicknessMm: number;    // 肉厚 mm (e.g., 2.3)
+  braceAttachY: number;        // 支柱取付高さ比率 0~1 (Y軸: 0=根元, 1=支柱頂部=mountHeight)
+  braceReachX: number;         // NS方向伸び比率 0~1 (X軸: 0=支柱直上, 1=ヨコサン位置まで)
   // ベースプレート (Base plates)
   basePlateWidthMm: number;    // (e.g., 250)
   basePlateThicknessMm: number;// (e.g., 12)

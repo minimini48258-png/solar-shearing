@@ -25,6 +25,7 @@ const DEF_PERGOLA_RACK: PergolaRackSpec = {
   yokosanH: 100, yokosanW: 50, yokosanT: 2.3,
   tatesanH: 60, tatesanW: 30, tatesanT: 2.3, tatesanPerSpan: 2,
   hasBrace: true, braceDiameterMm: 42.7, braceThicknessMm: 2.3,
+  braceAttachY: 0.65, braceReachX: 1.0,
   basePlateWidthMm: 250, basePlateThicknessMm: 12,
   foundationDepthM: 1.5, foundationType: 'baseplate',
 };
@@ -219,26 +220,29 @@ function addPergolaStructure(
   const yGrid: number[] = [];
   for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
 
-  // さざ波式 標準架台: NSバイ中間に支柱、前後ヨコサンへ斜材（右側面図でV字三角形）
-  const H_col = mountHeight * 0.65; // 支柱頭頂高さ（ヨコサンより低い）
+  // さざ波式 標準架台: NSバイ中間に支柱（ヨコサンまで）、タテサンへ斜材（V字三角形）
   const brMat = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 斜材: brown
+  const tsZ   = mountHeight + ysH + tsH / 2;               // タテサン中心高さ
+  const attachY  = rack.braceAttachY  ?? 0.65;             // 支柱取付高さ比率（Y）
+  const reachX   = rack.braceReachX   ?? 1.0;              // NS方向伸び比率（X）
 
   // ===== 支柱 + 斜材（NSバイごと × EW列ごとに設置）=====
-  // 支柱はNSバイ中間（yGrid[j]とyGrid[j+1]の中点）、斜材が前後ヨコサンへ伸びる
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
   for (const gx of xGrid) {
     for (let j = 0; j < rowsNS; j++) {
-      const gyMid    = (yGrid[j] + yGrid[j + 1]) / 2;  // NSバイ中間位置
-      const base     = pt(gx, gyMid, 0);
-      const postTop  = pt(gx, gyMid, H_col);
-      const frontTop = pt(gx, yGrid[j],     mountHeight); // 前方（南側）ヨコサン接合
-      const backTop  = pt(gx, yGrid[j + 1], mountHeight); // 後方（北側）ヨコサン接合
+      const gyMid    = (yGrid[j] + yGrid[j + 1]) / 2;
+      const halfBay  = (yGrid[j + 1] - yGrid[j]) / 2;
+      const base       = pt(gx, gyMid, 0);
+      const postTop    = pt(gx, gyMid, mountHeight);           // 支柱頂部 = ヨコサン底
+      const braceStart = pt(gx, gyMid, mountHeight * attachY); // 斜材取付位置（Y）
+      const frontEnd   = pt(gx, gyMid - halfBay * reachX, tsZ); // 前方タテサン接合（X）
+      const backEnd    = pt(gx, gyMid + halfBay * reachX, tsZ); // 後方タテサン接合（X）
 
-      // 中央垂直支柱（地面 → 支柱頭頂）
+      // 中央垂直支柱（地面 → ヨコサン底）
       addCylinder(scene, base, postTop, postR, postMat);
-      // 斜材（支柱頭頂 → 前後ヨコサン: V字形）
-      addCylinder(scene, postTop, frontTop, postR * 0.75, brMat);
-      addCylinder(scene, postTop, backTop,  postR * 0.75, brMat);
+      // 斜材（取付位置 → 前後タテサン: V字形）
+      addCylinder(scene, braceStart, frontEnd, postR * 0.75, brMat);
+      addCylinder(scene, braceStart, backEnd,  postR * 0.75, brMat);
 
       // ベースプレート（柱足元のみ）
       const plate = new THREE.Mesh(plateGeo, plateMat);
@@ -668,20 +672,25 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   const els: React.ReactElement[] = [];
   let k = 0;
 
-  // 支柱（NSバイ中間）+ 斜材（前後ヨコサンへ: 右側面図でV字三角形）
-  const H_col = mountHeight * 0.65;
+  // 支柱（NSバイ中間、ヨコサンまで）+ 斜材（タテサンへ V字形）
+  const tsZ      = mountHeight + ysH + tsH / 2;
+  const attachY  = rack.braceAttachY ?? 0.65;
+  const reachX   = rack.braceReachX  ?? 1.0;
   for (const gx of xGrid) {
     for (let j = 0; j < rowsNS; j++) {
-      const gyMid = (yGrid[j] + yGrid[j + 1]) / 2;
-      // 中央垂直支柱
+      const gyMid   = (yGrid[j] + yGrid[j + 1]) / 2;
+      const halfBay = (yGrid[j + 1] - yGrid[j]) / 2;
+      // 中央垂直支柱（地面 → ヨコサン底）
       const [x0, y0]   = sv(gx, gyMid, 0);
-      const [ptx, pty] = sv(gx, gyMid, H_col);
+      const [ptx, pty] = sv(gx, gyMid, mountHeight);
       els.push(<line key={k++} x1={x0} y1={y0} x2={ptx} y2={pty} stroke="#2b7dc7" strokeWidth="0.10" />);
-      // 斜材（支柱頭頂 → 前方ヨコサン / 後方ヨコサン）
-      const [fx, fy] = sv(gx, yGrid[j],     mountHeight);
-      const [bx, by] = sv(gx, yGrid[j + 1], mountHeight);
-      els.push(<line key={k++} x1={ptx} y1={pty} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
-      els.push(<line key={k++} x1={ptx} y1={pty} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
+      // 斜材取付点
+      const [bsx, bsy] = sv(gx, gyMid, mountHeight * attachY);
+      // 前後タテサン接合点
+      const [fx, fy] = sv(gx, gyMid - halfBay * reachX, tsZ);
+      const [bx, by] = sv(gx, gyMid + halfBay * reachX, tsZ);
+      els.push(<line key={k++} x1={bsx} y1={bsy} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
+      els.push(<line key={k++} x1={bsx} y1={bsy} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
     }
   }
   // ヨコサン — at every NS grid line (EW direction)
@@ -1193,12 +1202,24 @@ function PergolaRackSection({
       <DVNumInput label="肉厚" value={rackSpec.tatesanT} onChange={v => upd({ tatesanT: v })} unit="mm" min={1.5} max={6} step={0.1} />
       <DVNumInput label="1スパン本数" value={rackSpec.tatesanPerSpan} onChange={v => upd({ tatesanPerSpan: Math.max(1, Math.round(v)) })} unit="本" min={1} max={6} step={1} />
 
-      <div className="dv-section-title">🟤 筋交い (Bracing)</div>
-      <DVToggle label="筋交い" value={rackSpec.hasBrace} onChange={v => upd({ hasBrace: v })} />
+      <div className="dv-section-title">🟤 斜材 (Bracing)</div>
+      <DVToggle label="斜材" value={rackSpec.hasBrace} onChange={v => upd({ hasBrace: v })} />
       {rackSpec.hasBrace && (
         <>
           <DVNumInput label="径" value={rackSpec.braceDiameterMm} onChange={v => upd({ braceDiameterMm: v })} unit="mm" min={20} max={114} step={0.1} />
           <DVNumInput label="肉厚" value={rackSpec.braceThicknessMm} onChange={v => upd({ braceThicknessMm: v })} unit="mm" min={1.5} max={6} step={0.1} />
+          <DVNumInput
+            label="接続X（NS比率）"
+            value={rackSpec.braceReachX ?? 1.0}
+            onChange={v => upd({ braceReachX: Math.min(1, Math.max(0, v)) })}
+            unit="" min={0} max={1} step={0.05}
+          />
+          <DVNumInput
+            label="接続Y（高さ比率）"
+            value={rackSpec.braceAttachY ?? 0.65}
+            onChange={v => upd({ braceAttachY: Math.min(1, Math.max(0, v)) })}
+            unit="" min={0} max={1} step={0.05}
+          />
         </>
       )}
 
