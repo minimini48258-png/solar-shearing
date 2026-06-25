@@ -220,31 +220,37 @@ function addPergolaStructure(
   const yGrid: number[] = [];
   for (let j = 0; j <= rowsNS; j++) yGrid.push((j - rowsNS / 2) * nsSpacing);
 
-  // さざ波式 標準架台: NSバイ中間に支柱（ヨコサンまで）、タテサンへ斜材（V字三角形）
-  const brMat = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 斜材: brown
-  const tsZ   = mountHeight + ysH + tsH / 2;               // タテサン中心高さ
-  const attachY  = rack.braceAttachY  ?? 0.65;             // 支柱取付高さ比率（Y）
-  const reachX   = rack.braceReachX   ?? 1.0;              // NS方向伸び比率（X）
+  // さざ波式: yGrid境界位置に支柱（ヨコサンの真下）、隣接ヨコサンへ斜材
+  // 端の支柱は内側への斜材1本のみ
+  const brMat  = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // 斜材: brown
+  const tsZ    = mountHeight + ysH + tsH / 2;   // タテサン中心高さ
+  const attachY = rack.braceAttachY ?? 0.65;    // 支柱取付高さ比率（Y）
+  const reachX  = rack.braceReachX  ?? 1.0;     // NS方向伸び比率（X）
 
-  // ===== 支柱 + 斜材（NSバイごと × EW列ごとに設置）=====
+  // ===== 支柱 + 斜材（yGridごと × EW列ごとに設置）=====
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
   for (const gx of xGrid) {
-    for (let j = 0; j < rowsNS; j++) {
-      const gyMid    = (yGrid[j] + yGrid[j + 1]) / 2;
-      const halfBay  = (yGrid[j + 1] - yGrid[j]) / 2;
-      const base       = pt(gx, gyMid, 0);
-      const postTop    = pt(gx, gyMid, mountHeight);           // 支柱頂部 = ヨコサン底
-      const braceStart = pt(gx, gyMid, mountHeight * attachY); // 斜材取付位置（Y）
-      const frontEnd   = pt(gx, gyMid - halfBay * reachX, tsZ); // 前方タテサン接合（X）
-      const backEnd    = pt(gx, gyMid + halfBay * reachX, tsZ); // 後方タテサン接合（X）
+    for (let j = 0; j <= rowsNS; j++) {
+      const gy         = yGrid[j];
+      const base       = pt(gx, gy, 0);
+      const postTop    = pt(gx, gy, mountHeight);           // 支柱頂部 = ヨコサン底
+      const braceStart = pt(gx, gy, mountHeight * attachY); // 斜材取付位置（Y）
 
-      // 中央垂直支柱（地面 → ヨコサン底）
+      // 垂直支柱（地面 → ヨコサン底）
       addCylinder(scene, base, postTop, postR, postMat);
-      // 斜材（取付位置 → 前後タテサン: V字形）
-      addCylinder(scene, braceStart, frontEnd, postR * 0.75, brMat);
-      addCylinder(scene, braceStart, backEnd,  postR * 0.75, brMat);
 
-      // ベースプレート（柱足元のみ）
+      // 前方斜材（j > 0 のみ: 一つ前のヨコサン/タテサンへ）
+      if (j > 0) {
+        const nsReach = (yGrid[j] - yGrid[j - 1]) * reachX;
+        addCylinder(scene, braceStart, pt(gx, gy - nsReach, tsZ), postR * 0.75, brMat);
+      }
+      // 後方斜材（j < rowsNS のみ: 一つ後のヨコサン/タテサンへ）
+      if (j < rowsNS) {
+        const nsReach = (yGrid[j + 1] - yGrid[j]) * reachX;
+        addCylinder(scene, braceStart, pt(gx, gy + nsReach, tsZ), postR * 0.75, brMat);
+      }
+
+      // ベースプレート
       const plate = new THREE.Mesh(plateGeo, plateMat);
       plate.position.set(base.x, bpt / 2, base.z);
       plate.rotation.y = -rotRad;
@@ -672,25 +678,31 @@ function PergolaRackSVG({ cfg, rack, toSVG }: {
   const els: React.ReactElement[] = [];
   let k = 0;
 
-  // 支柱（NSバイ中間、ヨコサンまで）+ 斜材（タテサンへ V字形）
-  const tsZ      = mountHeight + ysH + tsH / 2;
-  const attachY  = rack.braceAttachY ?? 0.65;
-  const reachX   = rack.braceReachX  ?? 1.0;
+  // 支柱（yGrid境界、ヨコサン直下）+ 斜材（隣接タテサンへ、端は片方のみ）
+  const tsZ     = mountHeight + ysH + tsH / 2;
+  const attachY = rack.braceAttachY ?? 0.65;
+  const reachX  = rack.braceReachX  ?? 1.0;
   for (const gx of xGrid) {
-    for (let j = 0; j < rowsNS; j++) {
-      const gyMid   = (yGrid[j] + yGrid[j + 1]) / 2;
-      const halfBay = (yGrid[j + 1] - yGrid[j]) / 2;
-      // 中央垂直支柱（地面 → ヨコサン底）
-      const [x0, y0]   = sv(gx, gyMid, 0);
-      const [ptx, pty] = sv(gx, gyMid, mountHeight);
+    for (let j = 0; j <= rowsNS; j++) {
+      const gy = yGrid[j];
+      // 垂直支柱（地面 → ヨコサン底）
+      const [x0, y0]   = sv(gx, gy, 0);
+      const [ptx, pty] = sv(gx, gy, mountHeight);
       els.push(<line key={k++} x1={x0} y1={y0} x2={ptx} y2={pty} stroke="#2b7dc7" strokeWidth="0.10" />);
       // 斜材取付点
-      const [bsx, bsy] = sv(gx, gyMid, mountHeight * attachY);
-      // 前後タテサン接合点
-      const [fx, fy] = sv(gx, gyMid - halfBay * reachX, tsZ);
-      const [bx, by] = sv(gx, gyMid + halfBay * reachX, tsZ);
-      els.push(<line key={k++} x1={bsx} y1={bsy} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
-      els.push(<line key={k++} x1={bsx} y1={bsy} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
+      const [bsx, bsy] = sv(gx, gy, mountHeight * attachY);
+      // 前方斜材（j > 0 のみ）
+      if (j > 0) {
+        const nsReach = (yGrid[j] - yGrid[j - 1]) * reachX;
+        const [fx, fy] = sv(gx, gy - nsReach, tsZ);
+        els.push(<line key={k++} x1={bsx} y1={bsy} x2={fx} y2={fy} stroke="#8a6a20" strokeWidth="0.08" />);
+      }
+      // 後方斜材（j < rowsNS のみ）
+      if (j < rowsNS) {
+        const nsReach = (yGrid[j + 1] - yGrid[j]) * reachX;
+        const [bx, by] = sv(gx, gy + nsReach, tsZ);
+        els.push(<line key={k++} x1={bsx} y1={bsy} x2={bx} y2={by} stroke="#8a6a20" strokeWidth="0.08" />);
+      }
     }
   }
   // ヨコサン — at every NS grid line (EW direction)
@@ -730,14 +742,7 @@ function pergolaRackBBox(
         xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
         yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
       }
-      // 支柱基部（NSバイ中間位置）
-      if (j < rowsNS) {
-        const enMid = (j + 0.5 - rowsNS / 2) * nsSpacing;
-        const rxM = ex * cosr + enMid * sinr, ryM = -ex * sinr + enMid * cosr;
-        const [sxM, syM] = toSVG(rxM, ryM, 0);
-        xMin = Math.min(xMin, sxM); xMax = Math.max(xMax, sxM);
-        yMin = Math.min(yMin, syM); yMax = Math.max(yMax, syM);
-      }
+      // 斜材先端（タテサン高さ、yGridと同じNS位置なのでbboxは既に含まれている）
     }
   }
   return { xMin, xMax, yMin, yMax };
