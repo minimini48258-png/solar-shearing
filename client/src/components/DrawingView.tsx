@@ -34,6 +34,7 @@ const DEF_PERGOLA_RACK: PergolaRackSpec = {
 const DEF_SINGLE_AXIS_RACK: SingleAxisRackSpec = {
   postDiameterMm: 114.3, postThicknessMm: 4.5, postMaterial: 'STK400 亜鉛メッキ',
   postColsEW: 1,
+  ewBraceBottomH: 0, ewBraceTopH: 1,
   crossarmH: 100, crossarmW: 50, crossarmT: 3.2,
   purlinH: 60, purlinW: 30, purlinT: 2.3, purlinPerBay: 4,
   braceH: 0.55, braceReachNS: 0.35,
@@ -562,10 +563,12 @@ function addSingleAxisStructure(
     );
 
     // ===== EW X型斜材（隣接柱間、EW鉛直面内）=====
+    const ewBotZ = colTopZ * (rack.ewBraceBottomH ?? 0);
+    const ewTopZ = colTopZ * (rack.ewBraceTopH    ?? 1);
     for (let i = 0; i < ewColXs.length - 1; i++) {
       const x1 = ewColXs[i], x2 = ewColXs[i + 1];
-      addCylinder(scene, pt(x1, gy, 0),      pt(x2, gy, colTopZ), braceR, ewBraceMat);
-      addCylinder(scene, pt(x2, gy, 0),      pt(x1, gy, colTopZ), braceR, ewBraceMat);
+      addCylinder(scene, pt(x1, gy, ewBotZ), pt(x2, gy, ewTopZ), braceR, ewBraceMat);
+      addCylinder(scene, pt(x2, gy, ewBotZ), pt(x1, gy, ewTopZ), braceR, ewBraceMat);
     }
 
     // ===== NS方向斜材（各柱からNS方向へ、パーリン支持）=====
@@ -1017,12 +1020,14 @@ function SingleAxisRackSVG({ cfg, rack, toSVG }: {
     els.push(<line key={k++} x1={ax0} y1={ay0} x2={ax1} y2={ay1} stroke="#cc44aa" strokeWidth="0.10" />);
 
     // EW X型斜材（隣接柱間）
+    const ewBotZ = colTopZ * (rack.ewBraceBottomH ?? 0);
+    const ewTopZ = colTopZ * (rack.ewBraceTopH    ?? 1);
     for (let i = 0; i < ewColXs.length - 1; i++) {
       const x1 = ewColXs[i], x2 = ewColXs[i + 1];
-      const [b1x, b1y] = sv(x1, gy, 0);
-      const [t2x, t2y] = sv(x2, gy, colTopZ);
-      const [b2x, b2y] = sv(x2, gy, 0);
-      const [t1x, t1y] = sv(x1, gy, colTopZ);
+      const [b1x, b1y] = sv(x1, gy, ewBotZ);
+      const [t2x, t2y] = sv(x2, gy, ewTopZ);
+      const [b2x, b2y] = sv(x2, gy, ewBotZ);
+      const [t1x, t1y] = sv(x1, gy, ewTopZ);
       els.push(<line key={k++} x1={b1x} y1={b1y} x2={t2x} y2={t2y} stroke="#8a6a20" strokeWidth="0.07" />);
       els.push(<line key={k++} x1={b2x} y1={b2y} x2={t1x} y2={t1y} stroke="#8a6a20" strokeWidth="0.07" />);
     }
@@ -1070,7 +1075,11 @@ function singleAxisRackBBox(
       for (const ex of ewColXs) {
         const rx = ex * cosr + (en + enOff) * sinr;
         const ry = -ex * sinr + (en + enOff) * cosr;
-        for (const ez of [0, mountHeight * rack.braceH, mountHeight]) {
+        const armH2   = rack.crossarmH / 1000;
+        const colTopZ2 = mountHeight - armH2;
+        const ewBotZ2  = colTopZ2 * (rack.ewBraceBottomH ?? 0);
+        const ewTopZ2  = colTopZ2 * (rack.ewBraceTopH    ?? 1);
+        for (const ez of [0, ewBotZ2, ewTopZ2, mountHeight * rack.braceH, mountHeight]) {
           const [sx, sy] = toSVG(rx, ry, ez);
           xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
           yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
@@ -2162,6 +2171,14 @@ function SingleAxisRackSection({
       </div>
       <DVNumInput label="斜材径" value={rackSpec.braceDiameterMm} onChange={v => upd({ braceDiameterMm: v })} unit="mm" min={20} max={114} step={0.1} />
       <DVNumInput label="肉厚" value={rackSpec.braceThicknessMm} onChange={v => upd({ braceThicknessMm: v })} unit="mm" min={1.5} max={6} step={0.1} />
+      <DVNumInput label="下端高さ比率"
+        value={rackSpec.ewBraceBottomH ?? 0}
+        onChange={v => upd({ ewBraceBottomH: Math.min(rackSpec.ewBraceTopH ?? 1, Math.max(0, Math.round(v * 100) / 100)) })}
+        unit="(0=根元 1=頂部)" min={0} max={0.95} step={0.05} />
+      <DVNumInput label="上端高さ比率"
+        value={rackSpec.ewBraceTopH ?? 1}
+        onChange={v => upd({ ewBraceTopH: Math.max(rackSpec.ewBraceBottomH ?? 0, Math.min(1, Math.round(v * 100) / 100)) })}
+        unit="(0=根元 1=頂部)" min={0.05} max={1} step={0.05} />
 
       <div className="dv-section-title">🟠 NS方向斜材 (パーリン支持ブレース)</div>
       <DVNumInput label="取付高さ比率"

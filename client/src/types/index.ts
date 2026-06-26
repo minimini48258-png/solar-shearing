@@ -159,6 +159,8 @@ export interface SingleAxisRackSpec {
   postThicknessMm: number;
   postMaterial: string;
   postColsEW?: number;        // EW方向柱本数（省略=1 → 中央1本）
+  ewBraceBottomH?: number;    // EW斜材の下端取付高さ比率 0~1（colTopZ基準, 省略=0）
+  ewBraceTopH?: number;       // EW斜材の上端取付高さ比率 0~1（colTopZ基準, 省略=1）
   crossarmH: number;          // クロスアーム断面高さ mm
   crossarmW: number;          // 断面幅 mm
   crossarmT: number;          // 肉厚 mm
