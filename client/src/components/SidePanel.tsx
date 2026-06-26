@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import {
-  FieldInstallation, PanelConfig, SlopeConfig, AnyConfig,
+  FieldInstallation, PanelConfig, SlopeConfig, SingleAxisConfig, AnyConfig,
   InstallationType, MapStyle, DesignCase, ShadingResult, SunPosition, GroundSlope, TerrainElevation,
 } from '../types';
 import { geocodeAddress } from '../lib/geoUtils';
@@ -143,6 +143,10 @@ export default function SidePanel({
     if (!activeConfig || activeConfig.type !== 'slope') return;
     onConfigChange({ ...activeConfig as SlopeConfig, [k]: v });
   }, [activeConfig, onConfigChange]);
+  const updA = useCallback((k: keyof SingleAxisConfig, v: number) => {
+    if (!activeConfig || activeConfig.type !== 'single_axis') return;
+    onConfigChange({ ...activeConfig as SingleAxisConfig, [k]: v });
+  }, [activeConfig, onConfigChange]);
 
   const handleGeocode = useCallback(async () => {
     if (!addressInput.trim()) return;
@@ -163,11 +167,14 @@ export default function SidePanel({
   const isNight = sunPosition.altitude <= 0;
 
   // 設置タイプ色
-  const typeColor = (t: InstallationType) => t === 'pergola' ? '#3b82f6' : '#f97316';
-  const typeLabel = (t: InstallationType) => t === 'pergola' ? '藤棚' : '法面';
+  const typeColor = (t: InstallationType) =>
+    t === 'pergola' ? '#3b82f6' : t === 'slope' ? '#f97316' : '#16a34a';
+  const typeLabel = (t: InstallationType) =>
+    t === 'pergola' ? '藤棚' : t === 'slope' ? '法面' : '1軸型';
 
   const pc = activeConfig?.type === 'pergola' ? activeConfig as PanelConfig : null;
   const sc = activeConfig?.type === 'slope' ? activeConfig as SlopeConfig : null;
+  const ac = activeConfig?.type === 'single_axis' ? activeConfig as SingleAxisConfig : null;
 
   return (
     <aside className="side-panel">
@@ -223,6 +230,7 @@ export default function SidePanel({
               <div className="add-inst-row">
                 <button className="btn-add-inst pergola" onClick={() => onAddInstallation('pergola')}>＋ 藤棚を追加</button>
                 <button className="btn-add-inst slope" onClick={() => onAddInstallation('slope')}>＋ 法面を追加</button>
+                <button className="btn-add-inst single_axis" onClick={() => onAddInstallation('single_axis')}>＋ 1軸型を追加</button>
               </div>
               <button className="btn-secondary btn-block btn-sm" style={{ marginTop: 8 }} onClick={onAddBothTemplate}>
                 ＋ 藤棚＋法面をまとめて追加（一緒に設計）
@@ -299,6 +307,28 @@ export default function SidePanel({
                         <NumInput label="縦行数" value={sc.rowsDown} onChange={(v) => updS('rowsDown', Math.max(1,Math.round(v)))} min={1} max={30} step={1} unit="行" />
                         <NumInput label="横間隔" value={sc.acrossSpacing} onChange={(v) => updS('acrossSpacing', v)} min={0.5} max={10} unit="m" />
                         <NumInput label="縦間隔(斜面)" value={sc.downSpacing} onChange={(v) => updS('downSpacing', v)} min={0.5} max={10} unit="m" />
+                      </div>
+                    </>
+                  )}
+
+                  {/* 1軸型 */}
+                  {ac && (
+                    <>
+                      <div className="subsection">
+                        <h3>寸法・配置</h3>
+                        <NumInput label="パネル幅" value={ac.panelWidth} onChange={(v) => updA('panelWidth', v)} min={0.5} max={5} unit="m" />
+                        <NumInput label="奥行き" value={ac.panelDepth} onChange={(v) => updA('panelDepth', v)} min={0.5} max={5} unit="m" />
+                        <NumInput label="EW総列数" value={ac.colsEW} onChange={(v) => updA('colsEW', Math.max(2, Math.round(v)))} min={2} max={30} step={1} unit="列" />
+                        <NumInput label="NS行数" value={ac.rowsNS} onChange={(v) => updA('rowsNS', Math.max(1, Math.round(v)))} min={1} max={30} step={1} unit="行" />
+                        <NumInput label="EW間隔" value={ac.ewSpacing} onChange={(v) => updA('ewSpacing', v)} min={0.5} max={5} unit="m" />
+                        <NumInput label="NS間隔(柱ピッチ)" value={ac.nsSpacing} onChange={(v) => updA('nsSpacing', v)} min={1} max={20} unit="m" />
+                      </div>
+                      <div className="subsection">
+                        <h3>高さ・角度</h3>
+                        <NumInput label="柱高さ" value={ac.mountHeight} onChange={(v) => updA('mountHeight', v)} min={1} max={10} unit="m" />
+                        <NumInput label="傾斜角" value={ac.tiltAngle} onChange={(v) => updA('tiltAngle', v)} min={0} max={30} step={1} unit="°" />
+                        <NumInput label="傾斜方位" value={ac.facingAzimuth} onChange={(v) => updA('facingAzimuth', v)} min={0} max={360} step={5} unit="°" />
+                        <NumInput label="架台回転" value={ac.rackRotation} onChange={(v) => updA('rackRotation', v)} min={-180} max={180} step={5} unit="°" />
                       </div>
                     </>
                   )}

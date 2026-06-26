@@ -136,6 +136,15 @@
 .btn-sm { font-size: 11px; }
 .btn-block { width: 100%; margin-bottom: 6px; }
 
+.add-inst-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+.btn-add-inst { flex: 1; min-width: 80px; padding: 5px 6px; font-size: 11px; font-weight: 600; border: 1.5px solid; border-radius: 5px; cursor: pointer; transition: all 0.15s; text-align: center; background: white; }
+.btn-add-inst.pergola { color: #3b82f6; border-color: #93c5fd; }
+.btn-add-inst.pergola:hover { background: #eff6ff; }
+.btn-add-inst.slope { color: #f97316; border-color: #fdba74; }
+.btn-add-inst.slope:hover { background: #fff7ed; }
+.btn-add-inst.single_axis { color: #16a34a; border-color: #86efac; }
+.btn-add-inst.single_axis:hover { background: #f0fdf4; }
+
 .note { font-size: 10px; color: #9ca3af; line-height: 1.5; }
 
 .btn-drawing {

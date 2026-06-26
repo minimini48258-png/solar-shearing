@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  FieldInstallation, PanelConfig, SlopeConfig, AnyConfig, PanelPolygon, PanelSpec,
-  PergolaRackSpec, SlopeRackSpec, PANEL_PRESETS, CustomDrawLine,
+  FieldInstallation, PanelConfig, SlopeConfig, SingleAxisConfig, AnyConfig, PanelPolygon, PanelSpec,
+  PergolaRackSpec, SlopeRackSpec, SingleAxisRackSpec, PANEL_PRESETS, CustomDrawLine,
 } from '../types';
 import { generatePanels } from '../lib/panelGeometry';
 import { generateSlopePanels } from '../lib/slopePanelGeometry';
+import { generateSingleAxisPanels } from '../lib/singleAxisGeometry';
 import './DrawingView.css';
 
 type DrawingTab = '3d' | 'plan' | 'elevation' | 'section';
@@ -26,6 +27,15 @@ const DEF_PERGOLA_RACK: PergolaRackSpec = {
   tatesanH: 60, tatesanW: 30, tatesanT: 2.3, tatesanPerSpan: 2,
   hasBrace: true, braceDiameterMm: 42.7, braceThicknessMm: 2.3,
   braceAttachY: 0.65, braceReachX: 1.0,
+  basePlateWidthMm: 250, basePlateThicknessMm: 12,
+  foundationDepthM: 1.5, foundationType: 'baseplate',
+};
+
+const DEF_SINGLE_AXIS_RACK: SingleAxisRackSpec = {
+  postDiameterMm: 114.3, postThicknessMm: 4.5, postMaterial: 'STK400 亜鉛メッキ',
+  crossarmH: 100, crossarmW: 50, crossarmT: 3.2,
+  purlinH: 60, purlinW: 30, purlinT: 2.3, purlinPerBay: 4,
+  braceH: 0.6, braceDiameterMm: 48.6, braceThicknessMm: 2.3,
   basePlateWidthMm: 250, basePlateThicknessMm: 12,
   foundationDepthM: 1.5, foundationType: 'baseplate',
 };
@@ -70,13 +80,16 @@ function computeBBox(corners: { x: number; y: number; z: number }[]) {
 }
 
 function getAzimuth(inst: FieldInstallation): number {
-  return inst.config.type === 'pergola'
-    ? (inst.config as PanelConfig).facingAzimuth
-    : (inst.config as SlopeConfig).facingAzimuth;
+  if (inst.config.type === 'pergola') return (inst.config as PanelConfig).facingAzimuth;
+  if (inst.config.type === 'single_axis') return (inst.config as SingleAxisConfig).facingAzimuth;
+  return (inst.config as SlopeConfig).facingAzimuth;
 }
 
-function getEffectiveRack(inst: FieldInstallation): PergolaRackSpec | SlopeRackSpec {
-  return inst.rackSpec ?? (inst.installationType === 'pergola' ? DEF_PERGOLA_RACK : DEF_SLOPE_RACK);
+function getEffectiveRack(inst: FieldInstallation): PergolaRackSpec | SlopeRackSpec | SingleAxisRackSpec {
+  if (inst.rackSpec) return inst.rackSpec;
+  if (inst.installationType === 'pergola') return DEF_PERGOLA_RACK;
+  if (inst.installationType === 'single_axis') return DEF_SINGLE_AXIS_RACK;
+  return DEF_SLOPE_RACK;
 }
 
 function getEffectivePanelSpec(inst: FieldInstallation): PanelSpec {
@@ -177,8 +190,11 @@ function buildThreeScene(installation: FieldInstallation) {
   });
   const edgeMat = new THREE.LineBasicMaterial({ color: isP ? 0x1e3a8a : 0x9a3412 });
 
+  const isSA = installation.installationType === 'single_axis';
   const panels: PanelPolygon[] = isP
     ? generatePanels(installation.config as PanelConfig)
+    : isSA
+    ? generateSingleAxisPanels(installation.config as SingleAxisConfig)
     : generateSlopePanels(installation.config as SlopeConfig);
 
   for (const panel of panels) {
@@ -199,9 +215,13 @@ function buildThreeScene(installation: FieldInstallation) {
   }
 
   const rack = getEffectiveRack(installation);
-  isP
-    ? addPergolaStructure(scene, installation.config as PanelConfig, rack as PergolaRackSpec, panels)
-    : addSlopeStructure(scene, installation.config as SlopeConfig, rack as SlopeRackSpec, panels);
+  if (isP) {
+    addPergolaStructure(scene, installation.config as PanelConfig, rack as PergolaRackSpec, panels);
+  } else if (isSA) {
+    addSingleAxisStructure(scene, installation.config as SingleAxisConfig, rack as SingleAxisRackSpec, panels);
+  } else {
+    addSlopeStructure(scene, installation.config as SlopeConfig, rack as SlopeRackSpec, panels);
+  }
 
   // North arrow
   const arrowMat = new THREE.MeshBasicMaterial({ color: 0xff2020 });
@@ -468,6 +488,71 @@ function addSlopeStructure(
   }
 }
 
+function addSingleAxisStructure(
+  scene: THREE.Scene, cfg: SingleAxisConfig, rack: SingleAxisRackSpec, _panels: PanelPolygon[]
+) {
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+
+  const rotRad = rackRotation * Math.PI / 180;
+  const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
+  const rotENU = (ex: number, en: number): [number, number] => [
+    ex * cosr + en * sinr, -ex * sinr + en * cosr,
+  ];
+  const pt = (ex: number, en: number, ez: number) => {
+    const [rx, ry] = rotENU(ex, en);
+    return enuToThree(rx, ry, ez);
+  };
+
+  const postMat   = new THREE.MeshLambertMaterial({ color: 0x2b7dc7 });
+  const armMat    = new THREE.MeshLambertMaterial({ color: 0xcc44aa });
+  const purlinMat = new THREE.MeshLambertMaterial({ color: 0x22aa33 });
+  const braceMat  = new THREE.MeshLambertMaterial({ color: 0x8a6a20 });
+  const plateMat  = new THREE.MeshLambertMaterial({ color: 0xee6622 });
+
+  const postR    = rack.postDiameterMm / 1000 / 2;
+  const armH     = rack.crossarmH / 1000;
+  const purlinR  = rack.purlinW / 1000 / 2;
+  const braceR   = rack.braceDiameterMm / 1000 / 2;
+  const bp       = rack.basePlateWidthMm / 1000;
+  const bpt      = rack.basePlateThicknessMm / 1000;
+
+  const ewTotal = (colsEW - 1) * ewSpacing;
+  const halfEW  = ewTotal / 2;
+  const yGrid   = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+  const purlinCount = Math.max(2, rack.purlinPerBay);
+  const purlinXs    = Array.from({ length: purlinCount }, (_, i) =>
+    -halfEW + i * ewTotal / (purlinCount - 1)
+  );
+
+  const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
+
+  for (const gy of yGrid) {
+    const base = pt(0, gy, 0);
+    const top  = pt(0, gy, mountHeight - armH);
+    addCylinder(scene, base, top, postR, postMat);
+
+    const plate = new THREE.Mesh(plateGeo, plateMat);
+    plate.position.set(base.x, bpt / 2, base.z);
+    plate.rotation.y = -rotRad;
+    scene.add(plate);
+
+    // Crossarm
+    addCylinder(scene, pt(-halfEW, gy, mountHeight - armH / 2), pt(+halfEW, gy, mountHeight - armH / 2), armH / 2, armMat);
+
+    // Braces (X-shape)
+    const braceZ = mountHeight * rack.braceH;
+    const bs = pt(0, gy, braceZ);
+    addCylinder(scene, bs, pt(-halfEW, gy, mountHeight - armH / 2), braceR, braceMat);
+    addCylinder(scene, bs, pt(+halfEW, gy, mountHeight - armH / 2), braceR, braceMat);
+  }
+
+  // NS purlins at each EW position
+  const yMin = yGrid[0], yMax = yGrid[yGrid.length - 1];
+  for (const px of purlinXs) {
+    addCylinder(scene, pt(px, yMin, mountHeight), pt(px, yMax, mountHeight), purlinR, purlinMat);
+  }
+}
+
 // ===== 3D Viewer =====
 
 function ThreeViewer({ installation }: { installation: FieldInstallation }) {
@@ -642,6 +727,8 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
   const az = getAzimuth(installation);
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
+    : installationType === 'single_axis'
+    ? generateSingleAxisPanels(config as SingleAxisConfig)
     : generateSlopePanels(config as SlopeConfig);
 
   const rot = (x: number, y: number) => rotatePlan(x, y, az);
@@ -660,8 +747,9 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
   const vbW = rxMax - rxMin + 2 * mg, vbH = ryMax - ryMin + 2 * mg;
 
   const sv = (rx: number, ry: number): [number, number] => [rx, -ry];
-  const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.62)' : 'rgba(213,94,10,0.62)';
-  const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
+  const isSA2 = installationType === 'single_axis';
+  const pFill = isSA2 ? 'rgba(22,163,74,0.62)' : installationType === 'pergola' ? 'rgba(29,78,216,0.62)' : 'rgba(213,94,10,0.62)';
+  const pStroke = isSA2 ? '#15803d' : installationType === 'pergola' ? '#1e40af' : '#b45309';
 
   const center = (p: PanelPolygon) => {
     const [rx, ry] = rot(
@@ -671,20 +759,20 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
     return sv(rx, ry);
   };
 
-  const colsCount = installationType === 'pergola'
-    ? (config as PanelConfig).colsEW
+  const colsCount = (installationType === 'pergola' || isSA2)
+    ? (config as PanelConfig | SingleAxisConfig).colsEW
     : (config as SlopeConfig).colsAcross;
-  const rowsCount = installationType === 'pergola'
-    ? (config as PanelConfig).rowsNS
+  const rowsCount = (installationType === 'pergola' || isSA2)
+    ? (config as PanelConfig | SingleAxisConfig).rowsNS
     : (config as SlopeConfig).rowsDown;
   const totalPanels = colsCount * rowsCount;
   const area = totalPanels * config.panelWidth * config.panelDepth;
 
-  const ewSpacing = installationType === 'pergola'
-    ? (config as PanelConfig).ewSpacing
+  const ewSpacing = (installationType === 'pergola' || isSA2)
+    ? (config as PanelConfig | SingleAxisConfig).ewSpacing
     : (config as SlopeConfig).acrossSpacing;
-  const nsSpacing = installationType === 'pergola'
-    ? (config as PanelConfig).nsSpacing
+  const nsSpacing = (installationType === 'pergola' || isSA2)
+    ? (config as PanelConfig | SingleAxisConfig).nsSpacing
     : (config as SlopeConfig).downSpacing;
 
   const c0 = colsCount > 1 ? center(panels[0]) : null;
@@ -701,7 +789,8 @@ function PlanView({ installation }: { installation: FieldInstallation }) {
     <div className="svg-drawing-wrap">
       <div className="drawing-info-bar">
         <span className="dv-label">平面図</span>
-        <span>方位: {az}° ({azLabel(az)}) ／ {totalPanels}枚 ／ {area.toFixed(1)} m²</span>
+        <span>方位: {az}° ({azLabel(az)}) ／ {totalPanels}枚 ／ {area.toFixed(1)} m²
+          {isSA2 ? ' ／ 1軸型' : ''}</span>
         <span className="dv-note">※ パネル向き({azLabel(az)})を下方向に表示</span>
       </div>
       <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="drawing-svg" preserveAspectRatio="xMidYMid meet">
@@ -850,6 +939,81 @@ function pergolaRackBBox(
   return { xMin, xMax, yMin, yMax };
 }
 
+// ===== Single Axis Rack SVG =====
+
+function SingleAxisRackSVG({ cfg, rack, toSVG }: {
+  cfg: SingleAxisConfig;
+  rack: SingleAxisRackSpec;
+  toSVG: (x: number, y: number, z: number) => [number, number];
+}) {
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const rotRad = rackRotation * Math.PI / 180;
+  const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
+  const sv = (ex: number, en: number, ez: number): [number, number] =>
+    toSVG(ex * cosr + en * sinr, -ex * sinr + en * cosr, ez);
+
+  const armH     = rack.crossarmH / 1000;
+  const ewTotal  = (colsEW - 1) * ewSpacing;
+  const halfEW   = ewTotal / 2;
+  const braceZ   = mountHeight * rack.braceH;
+  const yGrid    = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+  const purlinCount = Math.max(2, rack.purlinPerBay);
+  const purlinXs = Array.from({ length: purlinCount }, (_, i) =>
+    -halfEW + i * ewTotal / (purlinCount - 1)
+  );
+
+  const els: React.ReactElement[] = [];
+  let k = 0;
+
+  for (const gy of yGrid) {
+    const [cx0, cy0] = sv(0, gy, 0);
+    const [ctx, cty] = sv(0, gy, mountHeight - armH);
+    els.push(<line key={k++} x1={cx0} y1={cy0} x2={ctx} y2={cty} stroke="#2b7dc7" strokeWidth="0.10" />);
+
+    const [ax0, ay0] = sv(-halfEW, gy, mountHeight - armH / 2);
+    const [ax1, ay1] = sv(+halfEW, gy, mountHeight - armH / 2);
+    els.push(<line key={k++} x1={ax0} y1={ay0} x2={ax1} y2={ay1} stroke="#cc44aa" strokeWidth="0.10" />);
+
+    const [bsx, bsy] = sv(0, gy, braceZ);
+    els.push(<line key={k++} x1={bsx} y1={bsy} x2={ax0} y2={ay0} stroke="#8a6a20" strokeWidth="0.08" />);
+    els.push(<line key={k++} x1={bsx} y1={bsy} x2={ax1} y2={ay1} stroke="#8a6a20" strokeWidth="0.08" />);
+  }
+
+  const yMin = yGrid[0], yMax = yGrid[yGrid.length - 1];
+  for (const px of purlinXs) {
+    const [p1x, p1y] = sv(px, yMin, mountHeight);
+    const [p2x, p2y] = sv(px, yMax, mountHeight);
+    els.push(<line key={k++} x1={p1x} y1={p1y} x2={p2x} y2={p2y} stroke="#22aa33" strokeWidth="0.07" />);
+  }
+
+  return <>{els}</>;
+}
+
+function singleAxisRackBBox(
+  cfg: SingleAxisConfig, rack: SingleAxisRackSpec,
+  toSVG: (x: number, y: number, z: number) => [number, number]
+): { xMin: number; xMax: number; yMin: number; yMax: number } {
+  const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const rotRad = rackRotation * Math.PI / 180;
+  const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
+  const ewTotal = (colsEW - 1) * ewSpacing;
+  const halfEW  = ewTotal / 2;
+  const yGrid   = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  for (const en of yGrid) {
+    for (const ex of [-halfEW, 0, +halfEW]) {
+      const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
+      for (const ez of [0, mountHeight * rack.braceH, mountHeight]) {
+        const [sx, sy] = toSVG(rx, ry, ez);
+        xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
+        yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
+      }
+    }
+  }
+  return { xMin, xMax, yMin, yMax };
+}
+
 // ===== Elevation View =====
 
 type ElevDir = 'front' | 'back' | 'right' | 'left';
@@ -947,8 +1111,11 @@ function ElevationView({
     }
   };
 
+  const isSAElev = installationType === 'single_axis';
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
+    : isSAElev
+    ? generateSingleAxisPanels(config as SingleAxisConfig)
     : generateSlopePanels(config as SlopeConfig);
 
   let svgXMin = Infinity, svgXMax = -Infinity, svgYMin = Infinity, svgYMax = -Infinity;
@@ -964,16 +1131,21 @@ function ElevationView({
     svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
     svgYMin = Math.min(svgYMin, rb.yMin); svgYMax = Math.max(svgYMax, rb.yMax);
   }
+  if (isSAElev) {
+    const rb = singleAxisRackBBox(config as SingleAxisConfig, getEffectiveRack(installation) as SingleAxisRackSpec, toSVG);
+    svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
+    svgYMin = Math.min(svgYMin, rb.yMin); svgYMax = Math.max(svgYMax, rb.yMax);
+  }
   svgYMax = Math.max(svgYMax, 0);
 
   const mg = 2.5;
   const vbX = svgXMin - mg, vbY = svgYMin - mg;
   const vbW = svgXMax - svgXMin + 2 * mg, vbH = svgYMax - svgYMin + 2 * mg;
-  const mountH = installationType === 'pergola'
-    ? (config as PanelConfig).mountHeight
+  const mountH = (installationType === 'pergola' || isSAElev)
+    ? (config as PanelConfig | SingleAxisConfig).mountHeight
     : (config as SlopeConfig).baseMountHeight;
-  const pFill    = installationType === 'pergola' ? 'rgba(29,78,216,0.55)' : 'rgba(213,94,10,0.55)';
-  const pStroke  = installationType === 'pergola' ? '#1e40af' : '#b45309';
+  const pFill    = isSAElev ? 'rgba(22,163,74,0.55)' : installationType === 'pergola' ? 'rgba(29,78,216,0.55)' : 'rgba(213,94,10,0.55)';
+  const pStroke  = isSAElev ? '#15803d' : installationType === 'pergola' ? '#1e40af' : '#b45309';
   const canDrag  = installationType === 'pergola' && !!onChange;
   const canDraw  = installationType === 'pergola' && !!onChange;
 
@@ -1170,7 +1342,14 @@ function ElevationView({
             toSVG={toSVG}
           />
         )}
-        {installationType === 'pergola' && (
+        {isSAElev && (
+          <SingleAxisRackSVG
+            cfg={config as SingleAxisConfig}
+            rack={getEffectiveRack(installation) as SingleAxisRackSpec}
+            toSVG={toSVG}
+          />
+        )}
+        {(installationType === 'pergola' || isSAElev) && (
           <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
             label={`${mountH.toFixed(2)} m`} color="#c53030" />
         )}
@@ -1191,9 +1370,9 @@ function ElevationView({
           offset={-1.3} label={`${(svgXMax - svgXMin).toFixed(2)} m`} />
         <DimLine x1={svgXMax} y1={0} x2={svgXMax} y2={svgYMin}
           offset={1.3} label={`${(-svgYMin).toFixed(2)} m`} />
-        {installationType === 'pergola' && (
+        {(installationType === 'pergola' || isSAElev) && (
           <text x={svgXMin + 0.2} y={svgYMin + 0.6} fontSize="0.38" fill="#e07010">
-            {(config as PanelConfig).tiltAngle}° 傾斜
+            {(config as PanelConfig | SingleAxisConfig).tiltAngle}° 傾斜
           </text>
         )}
         {/* カスタム描画線 */}
@@ -1245,26 +1424,29 @@ function SectionView({ installation, onChange }: {
   const az = getAzimuth(installation);
   const fwdE = Math.sin(az * Math.PI / 180);
   const fwdN = Math.cos(az * Math.PI / 180);
+  const isSASec = installationType === 'single_axis';
 
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
+    : isSASec
+    ? generateSingleAxisPanels(config as SingleAxisConfig)
     : generateSlopePanels(config as SlopeConfig);
 
-  const colsCount = installationType === 'pergola'
-    ? (config as PanelConfig).colsEW
+  const colsCount = (installationType === 'pergola' || isSASec)
+    ? (config as PanelConfig | SingleAxisConfig).colsEW
     : (config as SlopeConfig).colsAcross;
   const centerColIdx = Math.floor(colsCount / 2);
   const sectionPanels = panels.filter((_, i) => i % colsCount === centerColIdx);
 
-  const mountH = installationType === 'pergola'
-    ? (config as PanelConfig).mountHeight
+  const mountH = (installationType === 'pergola' || isSASec)
+    ? (config as PanelConfig | SingleAxisConfig).mountHeight
     : (config as SlopeConfig).baseMountHeight;
   const slopeAngle = installationType === 'slope' ? (config as SlopeConfig).slopeAngle : 0;
-  const effTilt = installationType === 'pergola'
-    ? (config as PanelConfig).tiltAngle
+  const effTilt = (installationType === 'pergola' || isSASec)
+    ? (config as PanelConfig | SingleAxisConfig).tiltAngle
     : slopeAngle + (config as SlopeConfig).additionalTilt;
-  const nsSpacing = installationType === 'pergola'
-    ? (config as PanelConfig).nsSpacing
+  const nsSpacing = (installationType === 'pergola' || isSASec)
+    ? (config as PanelConfig | SingleAxisConfig).nsSpacing
     : (config as SlopeConfig).downSpacing;
   const downSpacing = installationType === 'slope' ? (config as SlopeConfig).downSpacing : 0;
 
@@ -1276,6 +1458,7 @@ function SectionView({ installation, onChange }: {
   const rackForDraw = installationType === 'pergola'
     ? (getEffectiveRack(installation) as PergolaRackSpec) : null;
   const sectionLines: CustomDrawLine[] = rackForDraw?.customLines?.['section'] ?? [];
+  const saRackSec = isSASec ? (getEffectiveRack(installation) as SingleAxisRackSpec) : null;
 
   useEffect(() => {
     setDrawStart(null);
@@ -1370,12 +1553,17 @@ function SectionView({ installation, onChange }: {
     svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
     svgYMin = Math.min(svgYMin, rb.yMin);
   }
+  if (isSASec && saRackSec) {
+    const rb = singleAxisRackBBox(config as SingleAxisConfig, saRackSec, toSVG);
+    svgXMin = Math.min(svgXMin, rb.xMin); svgXMax = Math.max(svgXMax, rb.xMax);
+    svgYMin = Math.min(svgYMin, rb.yMin);
+  }
 
   const mg = 3;
   const vbX = svgXMin - mg, vbY = svgYMin - mg;
   const vbW = svgXMax - svgXMin + 2 * mg, vbH = svgYMax - svgYMin + 2 * mg;
-  const pFill = installationType === 'pergola' ? 'rgba(29,78,216,0.72)' : 'rgba(213,94,10,0.72)';
-  const pStroke = installationType === 'pergola' ? '#1e40af' : '#b45309';
+  const pFill = isSASec ? 'rgba(22,163,74,0.72)' : installationType === 'pergola' ? 'rgba(29,78,216,0.72)' : 'rgba(213,94,10,0.72)';
+  const pStroke = isSASec ? '#15803d' : installationType === 'pergola' ? '#1e40af' : '#b45309';
 
   let arcEl: React.ReactElement | null = null;
   if (sectionPanels.length > 0) {
@@ -1476,6 +1664,17 @@ function SectionView({ installation, onChange }: {
               label={`${mountH.toFixed(2)} m`} color="#c53030" />
           </>
         )}
+        {isSASec && saRackSec && (
+          <>
+            <SingleAxisRackSVG
+              cfg={config as SingleAxisConfig}
+              rack={saRackSec}
+              toSVG={toSVG}
+            />
+            <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
+              label={`${mountH.toFixed(2)} m`} color="#c53030" />
+          </>
+        )}
         {installationType === 'slope' && mountH > 0 && (
           <DimLine x1={svgXMin} y1={0} x2={svgXMin} y2={-mountH} offset={-1.4}
             label={`基礎 ${mountH.toFixed(2)} m`} color="#c53030" />
@@ -1496,7 +1695,7 @@ function SectionView({ installation, onChange }: {
             sectionPanels[1].corners.reduce((s, c) => s + c.y, 0) / 4,
             sectionPanels[1].corners.reduce((s, c) => s + c.z, 0) / 4,
           );
-          const spacingLabel = installationType === 'pergola'
+          const spacingLabel = (installationType === 'pergola' || isSASec)
             ? `@${nsSpacing}m` : `@${downSpacing}m(斜)`;
           return (
             <DimLine x1={c0x} y1={c0y} x2={c1x} y2={c1y}
@@ -1620,8 +1819,8 @@ function PanelSection({
     onChange(patch2);
   };
 
-  const totalPanels = installation.installationType === 'pergola'
-    ? (config as PanelConfig).colsEW * (config as PanelConfig).rowsNS
+  const totalPanels = (installation.installationType === 'pergola' || installation.installationType === 'single_axis')
+    ? (config as PanelConfig | SingleAxisConfig).colsEW * (config as PanelConfig | SingleAxisConfig).rowsNS
     : (config as SlopeConfig).colsAcross * (config as SlopeConfig).rowsDown;
   const totalW = totalPanels * spec.wattage;
   const totalWBi = spec.isBifacial ? totalW * (1 + spec.bifacialGainPct / 100) : totalW;
@@ -1843,6 +2042,62 @@ function SlopeRackSection({
   );
 }
 
+// ===== Single Axis Rack Section =====
+
+function SingleAxisRackSection({
+  rackSpec, onChange,
+}: {
+  rackSpec: SingleAxisRackSpec;
+  onChange: (r: SingleAxisRackSpec) => void;
+}) {
+  const upd = (patch: Partial<SingleAxisRackSpec>) => onChange({ ...rackSpec, ...patch });
+  return (
+    <>
+      <div className="dv-section-title">🔵 柱 (Posts)</div>
+      <DVNumInput label="外径" value={rackSpec.postDiameterMm} onChange={v => upd({ postDiameterMm: v })} unit="mm" min={48} max={216} step={0.1} />
+      <DVNumInput label="肉厚" value={rackSpec.postThicknessMm} onChange={v => upd({ postThicknessMm: v })} unit="mm" min={2} max={12} step={0.1} />
+      <DVSelect label="材質" value={rackSpec.postMaterial}
+        options={[
+          { value: 'STK400 亜鉛メッキ', label: 'STK400 亜鉛メッキ' },
+          { value: 'STK490 亜鉛メッキ', label: 'STK490 亜鉛メッキ' },
+          { value: 'SUS304', label: 'SUS304 ステンレス' },
+          { value: 'アルミ', label: 'アルミ合金' },
+        ]}
+        onChange={v => upd({ postMaterial: v })}
+      />
+      <DVNumInput label="ベースPL幅" value={rackSpec.basePlateWidthMm} onChange={v => upd({ basePlateWidthMm: v })} unit="mm" min={100} max={600} step={10} />
+      <DVNumInput label="ベースPL厚" value={rackSpec.basePlateThicknessMm} onChange={v => upd({ basePlateThicknessMm: v })} unit="mm" min={6} max={32} step={1} />
+
+      <div className="dv-section-title">🟣 クロスアーム (Cross Arms)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.crossarmH} onChange={v => upd({ crossarmH: v })} unit="mm" min={50} max={300} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.crossarmW} onChange={v => upd({ crossarmW: v })} unit="mm" min={30} max={200} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.crossarmT} onChange={v => upd({ crossarmT: v })} unit="mm" min={1.5} max={12} step={0.1} />
+
+      <div className="dv-section-title">🟢 パーリン/タテサン (NS Purlins)</div>
+      <DVNumInput label="断面高さ H" value={rackSpec.purlinH} onChange={v => upd({ purlinH: v })} unit="mm" min={30} max={200} step={5} />
+      <DVNumInput label="断面幅 W" value={rackSpec.purlinW} onChange={v => upd({ purlinW: v })} unit="mm" min={20} max={150} step={5} />
+      <DVNumInput label="肉厚" value={rackSpec.purlinT} onChange={v => upd({ purlinT: v })} unit="mm" min={1.5} max={8} step={0.1} />
+      <DVNumInput label="本数(EW)" value={rackSpec.purlinPerBay} onChange={v => upd({ purlinPerBay: Math.max(2, Math.round(v)) })} unit="本" min={2} max={10} step={1} />
+
+      <div className="dv-section-title">🟤 斜材 (Bracing)</div>
+      <DVNumInput label="斜材接続高さ比" value={rackSpec.braceH} onChange={v => upd({ braceH: Math.min(1, Math.max(0, v)) })} unit="(0~1)" min={0} max={1} step={0.05} />
+      <DVNumInput label="径" value={rackSpec.braceDiameterMm} onChange={v => upd({ braceDiameterMm: v })} unit="mm" min={20} max={114} step={0.1} />
+      <DVNumInput label="肉厚" value={rackSpec.braceThicknessMm} onChange={v => upd({ braceThicknessMm: v })} unit="mm" min={1.5} max={6} step={0.1} />
+
+      <div className="dv-section-title">⛏ 基礎 (Foundation)</div>
+      <DVSelect label="基礎タイプ" value={rackSpec.foundationType}
+        options={[
+          { value: 'baseplate', label: 'ベースプレート' },
+          { value: 'direct', label: '直接基礎（根入れ）' },
+          { value: 'anchor', label: 'アンカーボルト' },
+        ]}
+        onChange={v => upd({ foundationType: v as SingleAxisRackSpec['foundationType'] })}
+      />
+      <DVNumInput label="基礎深さ" value={rackSpec.foundationDepthM} onChange={v => upd({ foundationDepthM: v })} unit="m" min={0.5} max={5} step={0.1} />
+    </>
+  );
+}
+
 // ===== Main Edit Panel =====
 
 function EditPanel({
@@ -1859,7 +2114,7 @@ function EditPanel({
 
   const rackSpec = getEffectiveRack(installation);
   const handleRackChange = useCallback(
-    (newRack: PergolaRackSpec | SlopeRackSpec) => onChange({ rackSpec: newRack }),
+    (newRack: PergolaRackSpec | SlopeRackSpec | SingleAxisRackSpec) => onChange({ rackSpec: newRack }),
     [onChange]
   );
 
@@ -1867,7 +2122,7 @@ function EditPanel({
     <div className="dv-edit-panel">
       <div className="dv-edit-header">
         <span className={`dv-type-chip ${installationType}`}>
-          {installationType === 'pergola' ? '藤棚型' : '法面型'}
+          {installationType === 'pergola' ? '藤棚型' : installationType === 'single_axis' ? '1軸型' : '法面型'}
         </span>
         <span className="dv-edit-inst-name">{installation.name}</span>
       </div>
@@ -1933,6 +2188,32 @@ function EditPanel({
           />
         </>
       )}
+
+      {installationType === 'single_axis' && (
+        <>
+          <div className="dv-section-title">🏗 1軸型架台 基本設計</div>
+          <DVNumInput label="柱高さ" value={(config as SingleAxisConfig).mountHeight} onChange={v => upd({ mountHeight: v })} unit="m" min={0.5} max={15} step={0.1} />
+          <DVNumInput label="傾斜角" value={(config as SingleAxisConfig).tiltAngle} onChange={v => upd({ tiltAngle: v })} unit="°" min={0} max={30} step={1} />
+          <DVNumInput label="方位角" value={(config as SingleAxisConfig).facingAzimuth} onChange={v => upd({ facingAzimuth: v })} unit="°" min={0} max={360} step={1} />
+          <DVNumInput label="架台回転" value={(config as SingleAxisConfig).rackRotation} onChange={v => upd({ rackRotation: v })} unit="°" min={-90} max={90} step={1} />
+
+          <div className="dv-section-title">☀️ パネル配置</div>
+          <DVNumInput label="EW総列数" value={(config as SingleAxisConfig).colsEW} onChange={v => upd({ colsEW: Math.max(2, Math.round(v)) })} unit="列" min={2} max={30} step={1} />
+          <DVNumInput label="NS行数" value={(config as SingleAxisConfig).rowsNS} onChange={v => upd({ rowsNS: Math.max(1, Math.round(v)) })} unit="行" min={1} max={30} step={1} />
+          <DVNumInput label="EW間隔(C-C)" value={(config as SingleAxisConfig).ewSpacing} onChange={v => upd({ ewSpacing: v })} unit="m" min={0.5} max={10} step={0.05} />
+          <DVNumInput label="NS間隔(柱ピッチ)" value={(config as SingleAxisConfig).nsSpacing} onChange={v => upd({ nsSpacing: v })} unit="m" min={1} max={20} step={0.05} />
+
+          <div className="dv-calc-box">
+            <div>クロスアーム長: <strong>{((config as SingleAxisConfig).colsEW - 1) * (config as SingleAxisConfig).ewSpacing}m（両側合計）</strong></div>
+            <div>NS総長: <strong>{((config as SingleAxisConfig).rowsNS - 1) * (config as SingleAxisConfig).nsSpacing}m</strong></div>
+          </div>
+
+          <SingleAxisRackSection
+            rackSpec={rackSpec as SingleAxisRackSpec}
+            onChange={handleRackChange}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1943,17 +2224,42 @@ function SpecTable({ installation }: { installation: FieldInstallation }) {
   const { config, installationType } = installation;
   const spec = getEffectivePanelSpec(installation);
   const rack = getEffectiveRack(installation);
+  const isSASpec = installationType === 'single_axis';
   const panels = installationType === 'pergola'
     ? generatePanels(config as PanelConfig)
+    : isSASpec
+    ? generateSingleAxisPanels(config as SingleAxisConfig)
     : generateSlopePanels(config as SlopeConfig);
-  const totalPanels = installationType === 'pergola'
-    ? (config as PanelConfig).colsEW * (config as PanelConfig).rowsNS
+  const totalPanels = (installationType === 'pergola' || isSASpec)
+    ? (config as PanelConfig | SingleAxisConfig).colsEW * (config as PanelConfig | SingleAxisConfig).rowsNS
     : (config as SlopeConfig).colsAcross * (config as SlopeConfig).rowsDown;
   const area = totalPanels * config.panelWidth * config.panelDepth;
   const estKw = totalPanels * spec.wattage / 1000;
   const bb = computeBBox(panels.flatMap(p => p.corners));
 
-  const rows: [string, string][] = installationType === 'pergola' ? [
+  const rows: [string, string][] = isSASpec ? [
+    ['パネル型番', spec.model],
+    ['パネルメーカー', spec.maker || '—'],
+    ['パネル寸法', `${spec.widthMm}×${spec.lengthMm}×${spec.thicknessMm} mm`],
+    ['パネル出力', `${spec.wattage} W${spec.isBifacial ? ` (両面+${spec.bifacialGainPct}%)` : ''}`],
+    ['パネル枚数', `${totalPanels} 枚`],
+    ['総パネル面積', `${area.toFixed(1)} m²`],
+    ['推定出力', `${estKw.toFixed(2)} kW`],
+    ['柱高さ', `${(config as SingleAxisConfig).mountHeight} m`],
+    ['傾斜角', `${(config as SingleAxisConfig).tiltAngle}°`],
+    ['方位角', `${(config as SingleAxisConfig).facingAzimuth}°（${azLabel((config as SingleAxisConfig).facingAzimuth)}）`],
+    ['EW間隔(C-C)', `${(config as SingleAxisConfig).ewSpacing} m`],
+    ['NS柱ピッチ', `${(config as SingleAxisConfig).nsSpacing} m`],
+    ['外形 幅×奥行', `${(bb.xMax - bb.xMin).toFixed(2)} × ${(bb.yMax - bb.yMin).toFixed(2)} m`],
+    ['最高点', `${bb.zMax.toFixed(2)} m`],
+    ['---架台---', ''],
+    ['柱 外径×肉厚', `φ${(rack as SingleAxisRackSpec).postDiameterMm}×${(rack as SingleAxisRackSpec).postThicknessMm} mm`],
+    ['柱 材質', (rack as SingleAxisRackSpec).postMaterial],
+    ['クロスアーム', `${(rack as SingleAxisRackSpec).crossarmH}×${(rack as SingleAxisRackSpec).crossarmW} mm t=${(rack as SingleAxisRackSpec).crossarmT}`],
+    ['パーリン', `${(rack as SingleAxisRackSpec).purlinH}×${(rack as SingleAxisRackSpec).purlinW} mm (${(rack as SingleAxisRackSpec).purlinPerBay}本)`],
+    ['斜材', `φ${(rack as SingleAxisRackSpec).braceDiameterMm} (高さ比${(rack as SingleAxisRackSpec).braceH})`],
+    ['基礎深さ', `${(rack as SingleAxisRackSpec).foundationDepthM} m`],
+  ] : installationType === 'pergola' ? [
     ['パネル型番', spec.model],
     ['パネルメーカー', spec.maker || '—'],
     ['パネル寸法', `${spec.widthMm}×${spec.lengthMm}×${spec.thicknessMm} mm`],

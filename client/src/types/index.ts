@@ -4,7 +4,7 @@ export interface LocalPoint3D { x: number; y: number; z: number; }
 export interface SunPosition { azimuth: number; altitude: number; }
 
 // ===== 設置タイプ =====
-export type InstallationType = 'pergola' | 'slope';
+export type InstallationType = 'pergola' | 'slope' | 'single_axis';
 export type MapStyle = 'street' | 'satellite';
 
 // ===== 藤棚型 =====
@@ -37,7 +37,22 @@ export interface SlopeConfig {
   baseMountHeight: number;
 }
 
-export type AnyConfig = PanelConfig | SlopeConfig;
+// ===== 1軸型（中央1本柱・クロスアーム式） =====
+export interface SingleAxisConfig {
+  type: 'single_axis';
+  mountHeight: number;   // 柱高さ (m)
+  tiltAngle: number;     // 傾斜角 (°)
+  panelWidth: number;    // パネル幅 (m, EW方向)
+  panelDepth: number;    // パネル奥行き (m, NS方向)
+  colsEW: number;        // EW方向総列数（中央柱を挟んで両側合計）
+  rowsNS: number;        // NS方向行数
+  ewSpacing: number;     // EW C-C間隔 (m)
+  nsSpacing: number;     // NS C-C間隔 = 柱ピッチ (m)
+  facingAzimuth: number; // 方位角 (°)
+  rackRotation: number;  // 架台回転 (°)
+}
+
+export type AnyConfig = PanelConfig | SlopeConfig | SingleAxisConfig;
 
 // ===== 形状データ =====
 export interface PanelPolygon { corners: LocalPoint3D[]; panelIndex: number; }
@@ -138,6 +153,27 @@ export interface PergolaRackSpec {
   foundationType: 'direct' | 'baseplate' | 'anchor';
 }
 
+// ===== 架台仕様 - 1軸型 =====
+export interface SingleAxisRackSpec {
+  postDiameterMm: number;
+  postThicknessMm: number;
+  postMaterial: string;
+  crossarmH: number;          // クロスアーム断面高さ mm
+  crossarmW: number;          // 断面幅 mm
+  crossarmT: number;          // 肉厚 mm
+  purlinH: number;            // パーリン(NS方向)断面高さ mm
+  purlinW: number;
+  purlinT: number;
+  purlinPerBay: number;       // EW方向パーリン本数(総数)
+  braceH: number;             // 斜材取付高さ比率 0~1
+  braceDiameterMm: number;
+  braceThicknessMm: number;
+  basePlateWidthMm: number;
+  basePlateThicknessMm: number;
+  foundationDepthM: number;
+  foundationType: 'direct' | 'baseplate' | 'anchor';
+}
+
 // ===== 架台仕様 - 法面型 =====
 export interface SlopeRackSpec {
   // 支柱 (Posts perpendicular to slope)
@@ -175,7 +211,7 @@ export interface FieldInstallation {
   config: AnyConfig;
   groundSlope?: GroundSlope; // 省略時は平地 (angle=0)
   panelSpec?: PanelSpec;     // パネル仕様（省略時はデフォルト）
-  rackSpec?: PergolaRackSpec | SlopeRackSpec; // 架台仕様
+  rackSpec?: PergolaRackSpec | SlopeRackSpec | SingleAxisRackSpec; // 架台仕様
 }
 
 // ===== 遮光率計算結果 =====

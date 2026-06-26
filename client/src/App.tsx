@@ -1,11 +1,12 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
-  FieldInstallation, PanelConfig, SlopeConfig, AnyConfig,
+  FieldInstallation, PanelConfig, SlopeConfig, SingleAxisConfig, AnyConfig,
   InstallationType, MapStyle, DesignCase, ShadingResult, TerrainElevation,
 } from './types';
 import { getSunPosition, SEASON_PRESETS } from './lib/solar';
 import { generatePanels, getPanelSummary } from './lib/panelGeometry';
 import { generateSlopePanels, getSlopeSummary } from './lib/slopePanelGeometry';
+import { generateSingleAxisPanels, getSingleAxisSummary } from './lib/singleAxisGeometry';
 import { computeShadows, shiftShadowsForElevation } from './lib/shadow';
 import { panelsToGeoJSON, shadowsToGeoJSON, refPointsToGeoJSON, mergeFeatureCollections, terrainElevationsToGeoJSON, terrainElevationLabelsToGeoJSON } from './lib/geojson';
 import { calcShadingResult } from './lib/shadingCalc';
@@ -35,16 +36,23 @@ const DEF_SLOPE: SlopeConfig = {
   baseMountHeight: 0.3,
 };
 
+const DEF_SINGLE_AXIS: SingleAxisConfig = {
+  type: 'single_axis', mountHeight: 3.0, tiltAngle: 10,
+  panelWidth: 1.134, panelDepth: 1.961,
+  colsEW: 6, rowsNS: 3, ewSpacing: 1.3, nsSpacing: 3.0,
+  facingAzimuth: 180, rackRotation: 0,
+};
+
 function makeInst(type: InstallationType, suffix: string, loc = DEF_LOC): FieldInstallation {
+  const name = type === 'pergola' ? `藤棚${suffix}` : type === 'slope' ? `法面${suffix}` : `1軸型${suffix}`;
+  const cfg = type === 'pergola' ? { ...DEF_PERGOLA } : type === 'slope' ? { ...DEF_SLOPE } : { ...DEF_SINGLE_AXIS };
   return {
     id: `${type}-${Date.now()}-${suffix}`,
-    name: type === 'pergola' ? `藤棚${suffix}` : `法面${suffix}`,
+    name,
     installationType: type,
     location: loc,
-    config: type === 'pergola' ? { ...DEF_PERGOLA } : { ...DEF_SLOPE },
-    groundSlope: type === 'pergola'
-      ? { angle: 0, facingAzimuth: 180 }
-      : { angle: DEF_SLOPE.slopeAngle, facingAzimuth: DEF_SLOPE.facingAzimuth },
+    config: cfg,
+    groundSlope: { angle: type === 'slope' ? DEF_SLOPE.slopeAngle : 0, facingAzimuth: 180 },
   };
 }
 
@@ -131,6 +139,8 @@ export default function App() {
       const sunPos = getSunPosition(inst.location.lat, inst.location.lng, datetime);
       const panels = inst.installationType === 'pergola'
         ? generatePanels(inst.config as PanelConfig)
+        : inst.installationType === 'single_axis'
+        ? generateSingleAxisPanels(inst.config as SingleAxisConfig)
         : generateSlopePanels(inst.config as SlopeConfig);
       const shadows = computeShadows(
         panels, sunPos,
@@ -142,6 +152,8 @@ export default function App() {
       const shading  = calcShadingResult(inst.id, inst.config, shadows);
       const baseSummary = inst.installationType === 'pergola'
         ? getPanelSummary(inst.config as PanelConfig)
+        : inst.installationType === 'single_axis'
+        ? getSingleAxisSummary(inst.config as SingleAxisConfig)
         : getSlopeSummary(inst.config as SlopeConfig);
       const ps = inst.panelSpec;
       const estimatedKw = ps

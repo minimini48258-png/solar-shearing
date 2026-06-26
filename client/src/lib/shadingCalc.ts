@@ -11,7 +11,7 @@
  *  - 設置エリア面積: 配列の外形 (bounding box 近似)
  */
 
-import { AnyConfig, PanelConfig, SlopeConfig, ShadowPolygon, ShadingResult } from '../types';
+import { AnyConfig, PanelConfig, SlopeConfig, SingleAxisConfig, ShadowPolygon, ShadingResult } from '../types';
 
 const DEG2RAD = Math.PI / 180;
 
@@ -36,15 +36,13 @@ export function totalShadowAreaM2(shadows: ShadowPolygon[]): number {
 
 // 設置エリアの地表面積 (m²) — バウンディングボックス近似
 export function getFieldAreaM2(config: AnyConfig): number {
-  if (config.type === 'pergola') {
-    const c = config as PanelConfig;
-    // 全体外形: 端のパネルの外縁まで含む
+  if (config.type === 'pergola' || config.type === 'single_axis') {
+    const c = config as PanelConfig | SingleAxisConfig;
     const w = (c.colsEW - 1) * c.ewSpacing + c.panelWidth;
     const d = (c.rowsNS - 1) * c.nsSpacing + c.panelDepth * Math.cos(c.tiltAngle * DEG2RAD);
     return w * d;
   } else {
     const c = config as SlopeConfig;
-    // 法面の水平投影面積
     const w = (c.colsAcross - 1) * c.acrossSpacing + c.panelWidth;
     const d = (c.rowsDown - 1) * c.downSpacing * Math.cos(c.slopeAngle * DEG2RAD)
               + c.panelDepth * Math.cos((c.slopeAngle + c.additionalTilt) * DEG2RAD);
@@ -54,8 +52,8 @@ export function getFieldAreaM2(config: AnyConfig): number {
 
 // パネルの総面積 (m²)
 export function getTotalPanelAreaM2(config: AnyConfig): number {
-  if (config.type === 'pergola') {
-    const c = config as PanelConfig;
+  if (config.type === 'pergola' || config.type === 'single_axis') {
+    const c = config as PanelConfig | SingleAxisConfig;
     return c.colsEW * c.rowsNS * c.panelWidth * c.panelDepth;
   } else {
     const c = config as SlopeConfig;
