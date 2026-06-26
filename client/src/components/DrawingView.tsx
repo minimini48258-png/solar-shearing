@@ -33,9 +33,11 @@ const DEF_PERGOLA_RACK: PergolaRackSpec = {
 
 const DEF_SINGLE_AXIS_RACK: SingleAxisRackSpec = {
   postDiameterMm: 114.3, postThicknessMm: 4.5, postMaterial: 'STK400 亜鉛メッキ',
+  postColsEW: 1,
   crossarmH: 100, crossarmW: 50, crossarmT: 3.2,
   purlinH: 60, purlinW: 30, purlinT: 2.3, purlinPerBay: 4,
-  braceH: 0.6, braceDiameterMm: 48.6, braceThicknessMm: 2.3,
+  braceH: 0.55, braceReachNS: 0.35,
+  braceDiameterMm: 48.6, braceThicknessMm: 2.3,
   basePlateWidthMm: 250, basePlateThicknessMm: 12,
   foundationDepthM: 1.5, foundationType: 'baseplate',
 };
@@ -492,6 +494,7 @@ function addSingleAxisStructure(
   scene: THREE.Scene, cfg: SingleAxisConfig, rack: SingleAxisRackSpec, _panels: PanelPolygon[]
 ) {
   const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const postColsEW = rack.postColsEW ?? 1;
 
   const rotRad = rackRotation * Math.PI / 180;
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
@@ -506,7 +509,8 @@ function addSingleAxisStructure(
   const postMat   = new THREE.MeshLambertMaterial({ color: 0x2b7dc7 });
   const armMat    = new THREE.MeshLambertMaterial({ color: 0xcc44aa });
   const purlinMat = new THREE.MeshLambertMaterial({ color: 0x22aa33 });
-  const braceMat  = new THREE.MeshLambertMaterial({ color: 0x8a6a20 });
+  const ewBraceMat = new THREE.MeshLambertMaterial({ color: 0x8a6a20 }); // EW X斜材
+  const nsBraceMat = new THREE.MeshLambertMaterial({ color: 0xd97706 }); // NS斜材
   const plateMat  = new THREE.MeshLambertMaterial({ color: 0xee6622 });
 
   const postR    = rack.postDiameterMm / 1000 / 2;
@@ -516,37 +520,63 @@ function addSingleAxisStructure(
   const bp       = rack.basePlateWidthMm / 1000;
   const bpt      = rack.basePlateThicknessMm / 1000;
 
-  const ewTotal = (colsEW - 1) * ewSpacing;
-  const halfEW  = ewTotal / 2;
-  const yGrid   = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+  const ewTotal  = (colsEW - 1) * ewSpacing;
+  const halfEW   = ewTotal / 2;
+  const yGrid    = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+  const colTopZ  = mountHeight - armH;
+
+  // EW方向の柱位置
+  const ewColXs = postColsEW <= 1
+    ? [0]
+    : Array.from({ length: postColsEW }, (_, i) =>
+        -halfEW + i * ewTotal / (postColsEW - 1)
+      );
+
   const purlinCount = Math.max(2, rack.purlinPerBay);
   const purlinXs    = Array.from({ length: purlinCount }, (_, i) =>
     -halfEW + i * ewTotal / (purlinCount - 1)
   );
 
   const plateGeo = new THREE.BoxGeometry(bp, bpt, bp);
+  const nsReach  = nsSpacing * (rack.braceReachNS ?? 0.35);
+  const braceZ   = mountHeight * rack.braceH;
 
   for (const gy of yGrid) {
-    const base = pt(0, gy, 0);
-    const top  = pt(0, gy, mountHeight - armH);
-    addCylinder(scene, base, top, postR, postMat);
+    // ===== EW方向の柱 =====
+    for (const cx of ewColXs) {
+      const base = pt(cx, gy, 0);
+      const top  = pt(cx, gy, colTopZ);
+      addCylinder(scene, base, top, postR, postMat);
+      const plate = new THREE.Mesh(plateGeo, plateMat);
+      plate.position.set(base.x, bpt / 2, base.z);
+      plate.rotation.y = -rotRad;
+      scene.add(plate);
+    }
 
-    const plate = new THREE.Mesh(plateGeo, plateMat);
-    plate.position.set(base.x, bpt / 2, base.z);
-    plate.rotation.y = -rotRad;
-    scene.add(plate);
+    // ===== クロスアーム（EW方向、柱頂部を結ぶ横梁）=====
+    addCylinder(
+      scene,
+      pt(ewColXs[0], gy, mountHeight - armH / 2),
+      pt(ewColXs[ewColXs.length - 1], gy, mountHeight - armH / 2),
+      armH / 2, armMat
+    );
 
-    // Crossarm
-    addCylinder(scene, pt(-halfEW, gy, mountHeight - armH / 2), pt(+halfEW, gy, mountHeight - armH / 2), armH / 2, armMat);
+    // ===== EW X型斜材（隣接柱間、EW鉛直面内）=====
+    for (let i = 0; i < ewColXs.length - 1; i++) {
+      const x1 = ewColXs[i], x2 = ewColXs[i + 1];
+      addCylinder(scene, pt(x1, gy, 0),      pt(x2, gy, colTopZ), braceR, ewBraceMat);
+      addCylinder(scene, pt(x2, gy, 0),      pt(x1, gy, colTopZ), braceR, ewBraceMat);
+    }
 
-    // Braces (X-shape)
-    const braceZ = mountHeight * rack.braceH;
-    const bs = pt(0, gy, braceZ);
-    addCylinder(scene, bs, pt(-halfEW, gy, mountHeight - armH / 2), braceR, braceMat);
-    addCylinder(scene, bs, pt(+halfEW, gy, mountHeight - armH / 2), braceR, braceMat);
+    // ===== NS方向斜材（各柱からNS方向へ、パーリン支持）=====
+    for (const cx of ewColXs) {
+      const bs = pt(cx, gy, braceZ);
+      addCylinder(scene, bs, pt(cx, gy + nsReach, mountHeight), braceR * 0.8, nsBraceMat);
+      addCylinder(scene, bs, pt(cx, gy - nsReach, mountHeight), braceR * 0.8, nsBraceMat);
+    }
   }
 
-  // NS purlins at each EW position
+  // ===== NSパーリン（EW方向各位置、全NS長）=====
   const yMin = yGrid[0], yMax = yGrid[yGrid.length - 1];
   for (const px of purlinXs) {
     addCylinder(scene, pt(px, yMin, mountHeight), pt(px, yMax, mountHeight), purlinR, purlinMat);
@@ -947,6 +977,7 @@ function SingleAxisRackSVG({ cfg, rack, toSVG }: {
   toSVG: (x: number, y: number, z: number) => [number, number];
 }) {
   const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const postColsEW = rack.postColsEW ?? 1;
   const rotRad = rackRotation * Math.PI / 180;
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
   const sv = (ex: number, en: number, ez: number): [number, number] =>
@@ -955,8 +986,15 @@ function SingleAxisRackSVG({ cfg, rack, toSVG }: {
   const armH     = rack.crossarmH / 1000;
   const ewTotal  = (colsEW - 1) * ewSpacing;
   const halfEW   = ewTotal / 2;
+  const colTopZ  = mountHeight - armH;
   const braceZ   = mountHeight * rack.braceH;
+  const nsReach  = nsSpacing * (rack.braceReachNS ?? 0.35);
   const yGrid    = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+
+  const ewColXs = postColsEW <= 1
+    ? [0]
+    : Array.from({ length: postColsEW }, (_, i) => -halfEW + i * ewTotal / (postColsEW - 1));
+
   const purlinCount = Math.max(2, rack.purlinPerBay);
   const purlinXs = Array.from({ length: purlinCount }, (_, i) =>
     -halfEW + i * ewTotal / (purlinCount - 1)
@@ -966,19 +1004,40 @@ function SingleAxisRackSVG({ cfg, rack, toSVG }: {
   let k = 0;
 
   for (const gy of yGrid) {
-    const [cx0, cy0] = sv(0, gy, 0);
-    const [ctx, cty] = sv(0, gy, mountHeight - armH);
-    els.push(<line key={k++} x1={cx0} y1={cy0} x2={ctx} y2={cty} stroke="#2b7dc7" strokeWidth="0.10" />);
+    // 柱（EW方向に複数）
+    for (const cx of ewColXs) {
+      const [x0, y0] = sv(cx, gy, 0);
+      const [xt, yt] = sv(cx, gy, colTopZ);
+      els.push(<line key={k++} x1={x0} y1={y0} x2={xt} y2={yt} stroke="#2b7dc7" strokeWidth="0.10" />);
+    }
 
-    const [ax0, ay0] = sv(-halfEW, gy, mountHeight - armH / 2);
-    const [ax1, ay1] = sv(+halfEW, gy, mountHeight - armH / 2);
+    // クロスアーム（全EW幅）
+    const [ax0, ay0] = sv(ewColXs[0], gy, mountHeight - armH / 2);
+    const [ax1, ay1] = sv(ewColXs[ewColXs.length - 1], gy, mountHeight - armH / 2);
     els.push(<line key={k++} x1={ax0} y1={ay0} x2={ax1} y2={ay1} stroke="#cc44aa" strokeWidth="0.10" />);
 
-    const [bsx, bsy] = sv(0, gy, braceZ);
-    els.push(<line key={k++} x1={bsx} y1={bsy} x2={ax0} y2={ay0} stroke="#8a6a20" strokeWidth="0.08" />);
-    els.push(<line key={k++} x1={bsx} y1={bsy} x2={ax1} y2={ay1} stroke="#8a6a20" strokeWidth="0.08" />);
+    // EW X型斜材（隣接柱間）
+    for (let i = 0; i < ewColXs.length - 1; i++) {
+      const x1 = ewColXs[i], x2 = ewColXs[i + 1];
+      const [b1x, b1y] = sv(x1, gy, 0);
+      const [t2x, t2y] = sv(x2, gy, colTopZ);
+      const [b2x, b2y] = sv(x2, gy, 0);
+      const [t1x, t1y] = sv(x1, gy, colTopZ);
+      els.push(<line key={k++} x1={b1x} y1={b1y} x2={t2x} y2={t2y} stroke="#8a6a20" strokeWidth="0.07" />);
+      els.push(<line key={k++} x1={b2x} y1={b2y} x2={t1x} y2={t1y} stroke="#8a6a20" strokeWidth="0.07" />);
+    }
+
+    // NS方向斜材（各柱からNS方向、パーリン支持）
+    for (const cx of ewColXs) {
+      const [bsx, bsy] = sv(cx, gy, braceZ);
+      const [f1x, f1y] = sv(cx, gy + nsReach, mountHeight);
+      const [f2x, f2y] = sv(cx, gy - nsReach, mountHeight);
+      els.push(<line key={k++} x1={bsx} y1={bsy} x2={f1x} y2={f1y} stroke="#d97706" strokeWidth="0.07" />);
+      els.push(<line key={k++} x1={bsx} y1={bsy} x2={f2x} y2={f2y} stroke="#d97706" strokeWidth="0.07" />);
+    }
   }
 
+  // NSパーリン（全EW位置）
   const yMin = yGrid[0], yMax = yGrid[yGrid.length - 1];
   for (const px of purlinXs) {
     const [p1x, p1y] = sv(px, yMin, mountHeight);
@@ -994,20 +1053,28 @@ function singleAxisRackBBox(
   toSVG: (x: number, y: number, z: number) => [number, number]
 ): { xMin: number; xMax: number; yMin: number; yMax: number } {
   const { colsEW, rowsNS, ewSpacing, nsSpacing, mountHeight, rackRotation } = cfg;
+  const postColsEW = rack.postColsEW ?? 1;
   const rotRad = rackRotation * Math.PI / 180;
   const cosr = Math.cos(rotRad), sinr = Math.sin(rotRad);
   const ewTotal = (colsEW - 1) * ewSpacing;
   const halfEW  = ewTotal / 2;
+  const nsReach = nsSpacing * (rack.braceReachNS ?? 0.35);
   const yGrid   = Array.from({ length: rowsNS }, (_, j) => (j - (rowsNS - 1) / 2) * nsSpacing);
+  const ewColXs = postColsEW <= 1
+    ? [0]
+    : Array.from({ length: postColsEW }, (_, i) => -halfEW + i * ewTotal / (postColsEW - 1));
 
   let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
   for (const en of yGrid) {
-    for (const ex of [-halfEW, 0, +halfEW]) {
-      const rx = ex * cosr + en * sinr, ry = -ex * sinr + en * cosr;
-      for (const ez of [0, mountHeight * rack.braceH, mountHeight]) {
-        const [sx, sy] = toSVG(rx, ry, ez);
-        xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
-        yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
+    for (const enOff of [0, nsReach, -nsReach]) {
+      for (const ex of ewColXs) {
+        const rx = ex * cosr + (en + enOff) * sinr;
+        const ry = -ex * sinr + (en + enOff) * cosr;
+        for (const ez of [0, mountHeight * rack.braceH, mountHeight]) {
+          const [sx, sy] = toSVG(rx, ry, ez);
+          xMin = Math.min(xMin, sx); xMax = Math.max(xMax, sx);
+          yMin = Math.min(yMin, sy); yMax = Math.max(yMax, sy);
+        }
       }
     }
   }
@@ -2045,15 +2112,23 @@ function SlopeRackSection({
 // ===== Single Axis Rack Section =====
 
 function SingleAxisRackSection({
-  rackSpec, onChange,
+  rackSpec, onChange, rowsNS = 1,
 }: {
   rackSpec: SingleAxisRackSpec;
   onChange: (r: SingleAxisRackSpec) => void;
+  rowsNS?: number;
 }) {
   const upd = (patch: Partial<SingleAxisRackSpec>) => onChange({ ...rackSpec, ...patch });
+  const postColsEW = rackSpec.postColsEW ?? 1;
   return (
     <>
       <div className="dv-section-title">🔵 柱 (Posts)</div>
+      <DVNumInput label="EW方向柱本数" value={postColsEW}
+        onChange={v => upd({ postColsEW: Math.max(1, Math.round(v)) })}
+        unit="本" min={1} max={10} step={1} />
+      <div className="dv-calc-box" style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+        {postColsEW === 1 ? '中央1本（クロスアーム両側に張出）' : `EW方向に${postColsEW}本 → 間に${postColsEW - 1}スパンのX斜材`}
+      </div>
       <DVNumInput label="外径" value={rackSpec.postDiameterMm} onChange={v => upd({ postDiameterMm: v })} unit="mm" min={48} max={216} step={0.1} />
       <DVNumInput label="肉厚" value={rackSpec.postThicknessMm} onChange={v => upd({ postThicknessMm: v })} unit="mm" min={2} max={12} step={0.1} />
       <DVSelect label="材質" value={rackSpec.postMaterial}
@@ -2068,21 +2143,35 @@ function SingleAxisRackSection({
       <DVNumInput label="ベースPL幅" value={rackSpec.basePlateWidthMm} onChange={v => upd({ basePlateWidthMm: v })} unit="mm" min={100} max={600} step={10} />
       <DVNumInput label="ベースPL厚" value={rackSpec.basePlateThicknessMm} onChange={v => upd({ basePlateThicknessMm: v })} unit="mm" min={6} max={32} step={1} />
 
-      <div className="dv-section-title">🟣 クロスアーム (Cross Arms)</div>
+      <div className="dv-section-title">🟣 クロスアーム (Cross Arms, EW方向横梁)</div>
       <DVNumInput label="断面高さ H" value={rackSpec.crossarmH} onChange={v => upd({ crossarmH: v })} unit="mm" min={50} max={300} step={5} />
       <DVNumInput label="断面幅 W" value={rackSpec.crossarmW} onChange={v => upd({ crossarmW: v })} unit="mm" min={30} max={200} step={5} />
       <DVNumInput label="肉厚" value={rackSpec.crossarmT} onChange={v => upd({ crossarmT: v })} unit="mm" min={1.5} max={12} step={0.1} />
 
-      <div className="dv-section-title">🟢 パーリン/タテサン (NS Purlins)</div>
+      <div className="dv-section-title">🟢 パーリン (NS Purlins, パネル受材)</div>
       <DVNumInput label="断面高さ H" value={rackSpec.purlinH} onChange={v => upd({ purlinH: v })} unit="mm" min={30} max={200} step={5} />
       <DVNumInput label="断面幅 W" value={rackSpec.purlinW} onChange={v => upd({ purlinW: v })} unit="mm" min={20} max={150} step={5} />
       <DVNumInput label="肉厚" value={rackSpec.purlinT} onChange={v => upd({ purlinT: v })} unit="mm" min={1.5} max={8} step={0.1} />
-      <DVNumInput label="本数(EW)" value={rackSpec.purlinPerBay} onChange={v => upd({ purlinPerBay: Math.max(2, Math.round(v)) })} unit="本" min={2} max={10} step={1} />
+      <DVNumInput label="本数(EW方向総数)" value={rackSpec.purlinPerBay} onChange={v => upd({ purlinPerBay: Math.max(2, Math.round(v)) })} unit="本" min={2} max={10} step={1} />
 
-      <div className="dv-section-title">🟤 斜材 (Bracing)</div>
-      <DVNumInput label="斜材接続高さ比" value={rackSpec.braceH} onChange={v => upd({ braceH: Math.min(1, Math.max(0, v)) })} unit="(0~1)" min={0} max={1} step={0.05} />
-      <DVNumInput label="径" value={rackSpec.braceDiameterMm} onChange={v => upd({ braceDiameterMm: v })} unit="mm" min={20} max={114} step={0.1} />
+      <div className="dv-section-title">🟤 EW X型斜材 (柱間ブレース)</div>
+      <div className="dv-calc-box" style={{ fontSize: 10, color: '#6b7280' }}>
+        {postColsEW <= 1
+          ? '柱が1本の場合、EW X斜材は不要'
+          : `${postColsEW - 1}スパン × ${rowsNS}行 × 2本 = ${(postColsEW - 1) * rowsNS * 2}本`}
+      </div>
+      <DVNumInput label="斜材径" value={rackSpec.braceDiameterMm} onChange={v => upd({ braceDiameterMm: v })} unit="mm" min={20} max={114} step={0.1} />
       <DVNumInput label="肉厚" value={rackSpec.braceThicknessMm} onChange={v => upd({ braceThicknessMm: v })} unit="mm" min={1.5} max={6} step={0.1} />
+
+      <div className="dv-section-title">🟠 NS方向斜材 (パーリン支持ブレース)</div>
+      <DVNumInput label="取付高さ比率"
+        value={rackSpec.braceH}
+        onChange={v => upd({ braceH: Math.min(0.95, Math.max(0.1, v)) })}
+        unit="(0=根元 1=頂部)" min={0.1} max={0.95} step={0.05} />
+      <DVNumInput label="NS到達比率"
+        value={rackSpec.braceReachNS ?? 0.35}
+        onChange={v => upd({ braceReachNS: Math.min(0.5, Math.max(0.05, v)) })}
+        unit="(柱ピッチ比)" min={0.05} max={0.5} step={0.05} />
 
       <div className="dv-section-title">⛏ 基礎 (Foundation)</div>
       <DVSelect label="基礎タイプ" value={rackSpec.foundationType}
@@ -2211,6 +2300,7 @@ function EditPanel({
           <SingleAxisRackSection
             rackSpec={rackSpec as SingleAxisRackSpec}
             onChange={handleRackChange}
+            rowsNS={(config as SingleAxisConfig).rowsNS}
           />
         </>
       )}

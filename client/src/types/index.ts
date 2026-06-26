@@ -158,6 +158,7 @@ export interface SingleAxisRackSpec {
   postDiameterMm: number;
   postThicknessMm: number;
   postMaterial: string;
+  postColsEW?: number;        // EW方向柱本数（省略=1 → 中央1本）
   crossarmH: number;          // クロスアーム断面高さ mm
   crossarmW: number;          // 断面幅 mm
   crossarmT: number;          // 肉厚 mm
@@ -165,7 +166,8 @@ export interface SingleAxisRackSpec {
   purlinW: number;
   purlinT: number;
   purlinPerBay: number;       // EW方向パーリン本数(総数)
-  braceH: number;             // 斜材取付高さ比率 0~1
+  braceH: number;             // NS斜材の取付高さ比率 0~1（柱に対する高さ）
+  braceReachNS?: number;      // NS斜材のNS到達比率（nsSpacing に対する比率, 0~0.5）
   braceDiameterMm: number;
   braceThicknessMm: number;
   basePlateWidthMm: number;
